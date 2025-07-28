@@ -20,33 +20,77 @@ def get_toc(pdf_path):
                             text = span["text"].strip()
                             if text:
                                 size = span["size"]
+                                all_sizes.append(size)
+                                is_bold = (span["flags"] & 16) != 0
                                 if "a state space" in text:
-                                    print(f"Debug: Found normal text on page {page_num + 1}, size {size}, text: '{text}', bold: {(span['flags'] & 16) != 0}")
+                                    print(f"Debug: Found normal text on page {page_num + 1}, size {size}, text: '{text}', bold: {is_bold}")
                                 if "2. Framework" in text or "A. Model and Training Details" in text:
-                                    print(f"Debug: Found h1 text on page {page_num + 1}, size {size}, text: '{text}', bold: {(span['flags'] & 16) != 0}")
+                                    print(f"Debug: Found h1 text on page {page_num + 1}, size {size}, text: '{text}', bold: {is_bold}")
                                 if "Data and tasks." in text:
-                                    print(f"Debug: Found h3 text on page {page_num + 1}, size {size}, text: '{text}', bold: {(span['flags'] & 16) != 0}")
+                                    print(f"Debug: Found h3 text on page {page_num + 1}, size {size}, text: '{text}', bold: {is_bold}")
                                 
                                 all_sizes.append(size)
                                 if len(text.split()) < 10 and len(text) > 1:  # Short, non-empty, likely heading
-                                    potential_headings.append((page_num + 1, size, text))
+                                    potential_headings.append((page_num + 1, size, text, is_bold))
                                     if "Comparing foundation models to world models" in text or "B.1. Physics" in text:
-                                        print(f"Debug: Found h2 text on page {page_num + 1}, size {size}, text: '{text}', bold: {(span['flags'] & 16) != 0}")
+                                        print(f"Debug: Found h2 text on page {page_num + 1}, size {size}, text: '{text}', bold: {is_bold}")
                                     
         if all_sizes:
+            # Raw frequency distribution
+            from collections import Counter
+            raw_freq = Counter(all_sizes)
+            print("Raw Font Size Distribution (size: count):")
+            for size, count in sorted(raw_freq.items()):
+                print(f"  {size}: {count}")
+
+            # Function to merge close sizes
+            def merge_sizes(sizes, delta):
+                if not sizes:
+                    return {}
+                sorted_unique = sorted(set(sizes))
+                merged = {}
+                current_group = [sorted_unique[0]]
+                for i in range(1, len(sorted_unique)):
+                    if sorted_unique[i] - current_group[-1] <= delta:
+                        current_group.append(sorted_unique[i])
+                    else:
+                        # Represent group by mean
+                        group_key = sum(current_group) / len(current_group)
+                        group_count = sum(raw_freq[s] for s in current_group)
+                        merged[group_key] = group_count
+                        current_group = [sorted_unique[i]]
+                # Last group
+                group_key = sum(current_group) / len(current_group)
+                group_count = sum(raw_freq[s] for s in current_group)
+                merged[group_key] = group_count
+                return merged
+
+            # Merged distributions
+            deltas = {
+                "very light": 0.01,
+                "light": 0.1,
+                "moderate": 0.5
+            }
+            for label, delta in deltas.items():
+                merged_freq = merge_sizes(all_sizes, delta)
+                print(f"\n{label.capitalize()} Merged Font Size Distribution (mean group size: count):")
+                for size, count in sorted(merged_freq.items()):
+                    print(f"  {size:.4f}: {count}")
+
+            # Placeholder for heading logic (to be updated based on analysis)
             mean_size = statistics.mean(all_sizes)
             median_size = statistics.median(all_sizes)
-            threshold = mean_size * 1.2
+            threshold = median_size * 1.1
             print(f"Debug:\n · Mean size: {mean_size}\n · median size: {median_size}\n · threshold: {threshold}\n · {sorted(all_sizes).index(median_size)=}\n · {len(all_sizes)=}")
 
             # Deduplicate by text and page
             unique_headings = []
             seen = set()
-            for page, size, text in potential_headings:
+            for page, size, text, is_bold in potential_headings:
                 key = (text, page)
                 if key not in seen:
                     seen.add(key)
-                    unique_headings.append((page, size, text))
+                    unique_headings.append((page, size, text, is_bold))
 
             if unique_headings:
                 # Find max size
@@ -54,7 +98,7 @@ def get_toc(pdf_path):
 
                 # Assign levels
                 inferred_toc = []
-                for page, size, text in unique_headings:
+                for page, size, text, is_bold in unique_headings:
                     if size > threshold:
                         if size >= max_size * 0.9:
                             level = 1
