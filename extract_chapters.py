@@ -1,8 +1,9 @@
-
+#!/usr/bin/env /opt/homebrew/bin/uvx --with=PyMuPDF python3
 import fitz  # PyMuPDF
 import os
 import re
 import sys
+import extract_toc
 
 # --- Helper Functions ---
 def sanitize_filename(name):
@@ -127,10 +128,10 @@ if __name__ == "__main__":
     # --- PDF Processing ---
     try:
         doc = fitz.open(pdf_path)
-        toc = doc.get_toc()
+        toc = extract_toc.get_toc(pdf_path)
 
         if not toc:
-            print("No table of contents found in this PDF.")
+            print("No table of contents found or could be inferred in this PDF.")
             sys.exit(1)
 
         # --- Mode Execution ---
