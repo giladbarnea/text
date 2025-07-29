@@ -1,8 +1,10 @@
-#!/usr/bin/env /opt/homebrew/bin/uvx --with=PyMuPDF python3
+#!/usr/bin/env /opt/homebrew/bin/uvx --with=PyMuPDF,matplotlib python3
 import sys
 import fitz  # PyMuPDF
 import os
-import statistics  # For mean calculation
+import statistics
+import matplotlib.pyplot as plt
+from collections import Counter
 
 def get_toc(pdf_path):
     doc = fitz.open(pdf_path)
@@ -37,11 +39,21 @@ def get_toc(pdf_path):
                                     
         if all_sizes:
             # Raw frequency distribution
-            from collections import Counter
             raw_freq = Counter(all_sizes)
             print("Raw Font Size Distribution (size: count):")
             for size, count in sorted(raw_freq.items()):
                 print(f"  {size}: {count}")
+            
+            # Plot raw distribution as histogram
+            plt.figure(figsize=(10, 6))
+            plt.hist(all_sizes, bins=50, color='blue', alpha=0.7)
+            plt.title("Raw Font Size Histogram")
+            plt.xlabel("Font Size")
+            plt.ylabel("Frequency")
+            plt.grid(True)
+            plt.savefig("raw_font_size_dist.png")
+            plt.close()
+            print("Saved raw histogram to 'raw_font_size_dist.png'")
 
             # Function to merge close sizes
             def merge_sizes(sizes, delta):
