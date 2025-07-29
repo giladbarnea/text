@@ -1,11 +1,16 @@
-#!/usr/bin/env /opt/homebrew/bin/uvx --with=PyMuPDF,matplotlib,seaborn python3
+#!/usr/bin/env /opt/homebrew/bin/uvx --with=PyMuPDF,matplotlib,seaborn,plotly,scipy python3
 import sys
 import fitz  # PyMuPDF
 import os
 import statistics
 import matplotlib.pyplot as plt
 import seaborn as sns
+import plotly.express as px
+import plotly.graph_objects as go
+import plotly.io as pio
 from collections import Counter
+from scipy.stats import gaussian_kde
+import numpy as np
 
 def get_toc(pdf_path):
     doc = fitz.open(pdf_path)
@@ -39,54 +44,42 @@ def get_toc(pdf_path):
                                         print(f"Debug: Found h2 text on page {page_num + 1}, size {size}, text: '{text}', bold: {is_bold}")
                                     
         if all_sizes:
-            # Set seaborn theme for better aesthetics
-            sns.set_theme(style="whitegrid")
-            
-            # Raw frequency distribution
             raw_freq = Counter(all_sizes)
             
-            # Enhanced raw histogram with KDE
-            plt.figure(figsize=(12, 7))
-            sns.histplot(all_sizes, bins=50, kde=True, color='blue', alpha=0.7)
-            plt.title("Raw Font Size Distribution with KDE")
-            plt.xlabel("Font Size")
-            plt.ylabel("Frequency")
-            plt.grid(True)
+            # Interactive Raw Histogram with KDE using Plotly
+            all_sizes_array = np.array(all_sizes)
+            kde = gaussian_kde(all_sizes_array)
+            x_kde = np.linspace(min(all_sizes), max(all_sizes), 1000)
+            y_kde = kde(x_kde)
             
-            # Add vertical lines for stats
+            fig_raw = go.Figure()
+            fig_raw.add_trace(go.Histogram(x=all_sizes, nbinsx=50, marker=dict(color='rgba(0, 123, 255, 0.7)', line=dict(color='rgba(0, 123, 255, 1)', width=1)), name='Histogram'))
+            fig_raw.add_trace(go.Scatter(x=x_kde, y=y_kde * len(all_sizes) * (max(all_sizes) - min(all_sizes)) / 50, mode='lines', line=dict(color='darkblue', width=2), name='KDE'))
+            
             mean_size = statistics.mean(all_sizes)
             median_size = statistics.median(all_sizes)
             threshold = median_size * 1.1
-            plt.axvline(mean_size, color='green', linestyle='--', label=f'Mean: {mean_size:.2f}')
-            plt.axvline(median_size, color='red', linestyle='--', label=f'Median: {median_size:.2f}')
-            plt.axvline(threshold, color='purple', linestyle='--', label=f'Threshold: {threshold:.2f}')
-            plt.legend()
+            fig_raw.add_vline(x=mean_size, line=dict(dash='dash', color='green'), annotation_text=f'Mean: {mean_size:.2f}', annotation_position='top left')
+            fig_raw.add_vline(x=median_size, line=dict(dash='dash', color='red'), annotation_text=f'Median: {median_size:.2f}', annotation_position='top left')
+            fig_raw.add_vline(x=threshold, line=dict(dash='dash', color='purple'), annotation_text=f'Threshold: {threshold:.2f}', annotation_position='top left')
             
-            # Annotate major peaks
-            sorted_freq = sorted(raw_freq.items(), key=lambda x: x[1], reverse=True)[:5]  # Top 5 peaks
+            sorted_freq = sorted(raw_freq.items(), key=lambda x: x[1], reverse=True)[:5]
             for size, count in sorted_freq:
-                plt.annotate(f'Size: {size:.2f}\nCount: {count}', xy=(size, count), xytext=(size + 0.5, count + 50),
-                             arrowprops=dict(facecolor='black', shrink=0.05), fontsize=10)
+                fig_raw.add_annotation(x=size, y=count, text=f'Size: {size:.2f}<br>Count: {count}', showarrow=True, arrowhead=1)
             
-            plt.savefig("raw_font_size_dist.png", dpi=300)
-            plt.close()
-            print("Saved enhanced raw distribution to 'raw_font_size_dist.png'")
+            fig_raw.update_layout(title='Interactive Raw Font Size Distribution with KDE', xaxis_title='Font Size', yaxis_title='Frequency', barmode='overlay', hovermode='x unified')
+            fig_raw.write_html('raw_font_size_dist.html')
+            print("Saved interactive raw distribution to 'raw_font_size_dist.html'")
             
-            # Sorted bar chart of unique sizes
-            plt.figure(figsize=(14, 7))
+            # Interactive Sorted Bar Chart
             unique_sizes = sorted(raw_freq.keys())
             counts = [raw_freq[size] for size in unique_sizes]
-            sns.barplot(x=unique_sizes, y=counts, palette='viridis')
-            plt.title("Frequency of Unique Font Sizes (Sorted)")
-            plt.xlabel("Font Size")
-            plt.ylabel("Frequency")
-            plt.xticks(rotation=90, fontsize=8)
-            plt.tight_layout()
-            plt.savefig("unique_font_size_freq.png", dpi=300)
-            plt.close()
-            print("Saved unique font size frequency bar chart to 'unique_font_size_freq.png'")
+            fig_bar = px.bar(x=unique_sizes, y=counts, color=counts, color_continuous_scale='viridis', labels={'x': 'Font Size', 'y': 'Frequency'})
+            fig_bar.update_layout(title='Interactive Frequency of Unique Font Sizes (Sorted)', xaxis_tickangle=-45)
+            fig_bar.write_html('unique_font_size_freq.html')
+            print("Saved interactive unique font size frequency to 'unique_font_size_freq.html'")
             
-            # Function to merge close sizes
+            # Function to merge close sizes (unchanged)
             def merge_sizes(sizes, delta):
                 if not sizes:
                     return {}
@@ -101,13 +94,12 @@ def get_toc(pdf_path):
                         group_count = sum(raw_freq[s] for s in current_group)
                         merged[group_key] = group_count
                         current_group = [sorted_unique[i]]
-                # Last group
                 group_key = statistics.mean(current_group)
                 group_count = sum(raw_freq[s] for s in current_group)
                 merged[group_key] = group_count
                 return merged
             
-            # Merged distributions with plots
+            # Interactive Merged Distributions
             deltas = {
                 "very light": 0.01,
                 "light": 0.1,
@@ -115,20 +107,12 @@ def get_toc(pdf_path):
             }
             for label, delta in deltas.items():
                 merged_freq = merge_sizes(all_sizes, delta)
-                
-                # Plot merged histogram
                 merged_sizes = list(merged_freq.keys())
                 merged_counts = list(merged_freq.values())
-                plt.figure(figsize=(12, 7))
-                sns.barplot(x=merged_sizes, y=merged_counts, palette='coolwarm')
-                plt.title(f"{label.capitalize()} Merged Font Size Distribution")
-                plt.xlabel("Merged Font Size")
-                plt.ylabel("Frequency")
-                plt.xticks(rotation=45)
-                plt.tight_layout()
-                plt.savefig(f"{label}_merged_font_size_dist.png", dpi=300)
-                plt.close()
-                print(f"Saved {label} merged distribution to '{label}_merged_font_size_dist.png'")
+                fig_merged = px.bar(x=merged_sizes, y=merged_counts, color=merged_counts, color_continuous_scale='coolwarm', labels={'x': 'Merged Font Size', 'y': 'Frequency'})
+                fig_merged.update_layout(title=f'Interactive {label.capitalize()} Merged Font Size Distribution', xaxis_tickangle=-45)
+                fig_merged.write_html(f'{label}_merged_font_size_dist.html')
+                print(f"Saved interactive {label} merged distribution to '{label}_merged_font_size_dist.html'")
             
             print(f"Debug:\n · Mean size: {mean_size}\n · median size: {median_size}\n · threshold: {threshold}\n · {sorted(all_sizes).index(median_size)=}\n · {len(all_sizes)=}")
             
