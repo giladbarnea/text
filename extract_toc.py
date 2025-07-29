@@ -54,28 +54,28 @@ def get_toc(pdf_path):
             
             fig_raw = go.Figure()
             fig_raw.add_trace(go.Histogram(x=all_sizes, nbinsx=50, marker=dict(color='rgba(0, 123, 255, 0.7)', line=dict(color='rgba(0, 123, 255, 1)', width=1)), name='Histogram'))
-            fig_raw.add_trace(go.Scatter(x=x_kde, y=y_kde * len(all_sizes) * (max(all_sizes) - min(all_sizes)) / 50, mode='lines', line=dict(color='darkblue', width=2), name='KDE'))
+            fig_raw.add_trace(go.Scatter(x=x_kde, y=y_kde * len(all_sizes) * (max(all_sizes) - min(all_sizes)) / 50, mode='lines', line=dict(color='red', width=2), name='KDE'))
             
             mean_size = statistics.mean(all_sizes)
             median_size = statistics.median(all_sizes)
             threshold = median_size * 1.1
-            fig_raw.add_vline(x=mean_size, line=dict(dash='dash', color='green'), annotation_text=f'Mean: {mean_size:.2f}', annotation_position='top left')
-            fig_raw.add_vline(x=median_size, line=dict(dash='dash', color='red'), annotation_text=f'Median: {median_size:.2f}', annotation_position='top left')
-            fig_raw.add_vline(x=threshold, line=dict(dash='dash', color='purple'), annotation_text=f'Threshold: {threshold:.2f}', annotation_position='top left')
+            fig_raw.add_vline(x=mean_size, line=dict(color='green', width=2), annotation_text='Mean', annotation_position='top left')
+            fig_raw.add_vline(x=median_size, line=dict(color='orange', width=2), annotation_text='Median', annotation_position='top left')
+            fig_raw.add_vline(x=threshold, line=dict(color='purple', width=2), annotation_text='Threshold', annotation_position='top left')
             
             sorted_freq = sorted(raw_freq.items(), key=lambda x: x[1], reverse=True)[:5]
-            for size, count in sorted_freq:
-                fig_raw.add_annotation(x=size, y=count, text=f'Size: {size:.2f}<br>Count: {count}', showarrow=True, arrowhead=1)
+            for i, (size, count) in enumerate(sorted_freq):
+                fig_raw.add_annotation(x=size, y=count, text=f'Top {i+1}: Size {size:.2f}, Count {count}', showarrow=True, arrowhead=1, yshift=10)
             
-            fig_raw.update_layout(title='Interactive Raw Font Size Distribution with KDE', xaxis_title='Font Size', yaxis_title='Frequency', barmode='overlay', hovermode='x unified')
+            fig_raw.update_layout(title='Interactive Raw Font Size Distribution with KDE', xaxis_title='Font Size', yaxis_title='Frequency', barmode='overlay', hovermode='x unified', legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01))
             fig_raw.write_html('raw_font_size_dist.html')
             print("Saved interactive raw distribution to 'raw_font_size_dist.html'")
             
             # Interactive Sorted Bar Chart
             unique_sizes = sorted(raw_freq.keys())
             counts = [raw_freq[size] for size in unique_sizes]
-            fig_bar = px.bar(x=unique_sizes, y=counts, color=counts, color_continuous_scale='viridis', labels={'x': 'Font Size', 'y': 'Frequency'})
-            fig_bar.update_layout(title='Interactive Frequency of Unique Font Sizes (Sorted)', xaxis_tickangle=-45)
+            fig_bar = go.Figure(go.Scatter(x=unique_sizes, y=counts, mode='markers+lines', marker=dict(color=counts, colorscale='viridis', size=10), line=dict(color='gray')))
+            fig_bar.update_layout(title='Interactive Frequency of Unique Font Sizes (Sorted)', xaxis_title='Font Size', yaxis_title='Frequency', yaxis_type='log')
             fig_bar.write_html('unique_font_size_freq.html')
             print("Saved interactive unique font size frequency to 'unique_font_size_freq.html'")
             
@@ -107,12 +107,12 @@ def get_toc(pdf_path):
             }
             for label, delta in deltas.items():
                 merged_freq = merge_sizes(all_sizes, delta)
-                merged_sizes = list(merged_freq.keys())
-                merged_counts = list(merged_freq.values())
-                fig_merged = px.bar(x=merged_sizes, y=merged_counts, color=merged_counts, color_continuous_scale='coolwarm', labels={'x': 'Merged Font Size', 'y': 'Frequency'})
-                fig_merged.update_layout(title=f'Interactive {label.capitalize()} Merged Font Size Distribution', xaxis_tickangle=-45)
-                fig_merged.write_html(f'{label}_merged_font_size_dist.html')
-                print(f"Saved interactive {label} merged distribution to '{label}_merged_font_size_dist.html'")
+                merged_sizes = sorted(merged_freq.keys())
+                merged_counts = [merged_freq[size] for size in merged_sizes]
+                fig_merged = go.Figure(go.Scatter(x=merged_sizes, y=merged_counts, mode='markers+lines', marker=dict(color=merged_counts, colorscale='rdbu', size=12), line=dict(color='lightgray')))
+                fig_merged.update_layout(title=f'Interactive {label.capitalize()} Merged Font Size Distribution', xaxis_title='Merged Font Size', yaxis_title='Frequency', yaxis_type='log' if label == 'very light' else 'linear')
+                fig_merged.write_html(f'{label.replace(" ", "_")}_merged_font_size_dist.html')
+                print(f"Saved interactive {label} merged distribution to '{label.replace(" ", "_")}_merged_font_size_dist.html'")
             
             print(f"Debug:\n · Mean size: {mean_size}\n · median size: {median_size}\n · threshold: {threshold}\n · {sorted(all_sizes).index(median_size)=}\n · {len(all_sizes)=}")
             
