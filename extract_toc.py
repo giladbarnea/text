@@ -36,8 +36,6 @@ def get_toc(pdf_path):
                                     print(f"Debug: Found h1 text on page {page_num + 1}, size {size}, text: '{text}', bold: {is_bold}")
                                 if "Data and tasks." in text:
                                     print(f"Debug: Found h3 text on page {page_num + 1}, size {size}, text: '{text}', bold: {is_bold}")
-                                
-                                all_sizes.append(size)
                                 if len(text.split()) < 10 and len(text) > 1:  # Short, non-empty, likely heading
                                     potential_headings.append((page_num + 1, size, text, is_bold))
                                     if "Comparing foundation models to world models" in text or "B.1. Physics" in text:
