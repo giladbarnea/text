@@ -89,7 +89,7 @@ def get_toc(pdf_path):
             
             sorted_freq = sorted(raw_freq.items(), key=lambda x: x[1], reverse=True)[:5]
             for i, (size, count) in enumerate(sorted_freq):
-                fig_raw.add_annotation(x=size, y=count, text=f'Top {i+1}: {size:.2f} ({count})', showarrow=True, arrowhead=1, yshift=10)
+                fig_raw.add_annotation(x=size, y=count, text=f'Top {i+1}: {size:.2f} ({count})', showarrow=True, arrowhead=1, yshift=10, font=dict(size=8))
             
             fig_raw.update_layout(title='Interactive Raw Font Size Distribution with KDE', xaxis_title='Font Size', yaxis_title='Frequency', barmode='overlay', hovermode='x unified', legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01))
             fig_raw.write_html('raw_font_size_dist.html')
