@@ -5,12 +5,14 @@ import re
 import sys
 import extract_toc
 
+
 # --- Helper Functions ---
 def sanitize_filename(name):
     """Sanitizes a string to be a valid filename."""
     name = name.lower()
-    name = re.sub(r'[\s\W-]+', '-', name).strip('-')
+    name = re.sub(r"[\s\W-]+", "-", name).strip("-")
     return name
+
 
 # --- Main Extraction Logic ---
 def extract_chapters_individually(doc, toc, output_dir):
@@ -39,6 +41,7 @@ def extract_chapters_individually(doc, toc, output_dir):
 
         print(f"  - Extracted '{title}' to '{output_path}'")
 
+
 def extract_chapters_in_batches(doc, toc, batch_size, output_dir):
     """Extracts chapters in batches of a specified page size."""
     print(f"Extracting chapters in batches of {batch_size} pages...")
@@ -57,7 +60,12 @@ def extract_chapters_in_batches(doc, toc, batch_size, output_dir):
         else:
             end_page = doc.page_count
         page_count = end_page - start_page + 1
-        chapter_details.append({'title': title, 'start': start_page, 'end': end_page, 'count': page_count})
+        chapter_details.append({
+            "title": title,
+            "start": start_page,
+            "end": end_page,
+            "count": page_count,
+        })
 
     # Second pass: Create batches
     current_batch_start_page = -1
@@ -66,40 +74,52 @@ def extract_chapters_in_batches(doc, toc, batch_size, output_dir):
 
     for i, details in enumerate(chapter_details):
         if not current_batch_chapters:
-            current_batch_start_page = details['start']
-            current_batch_start_title = details['title']
+            current_batch_start_page = details["start"]
+            current_batch_start_title = details["title"]
 
-        if current_batch_pages + details['count'] > batch_size and current_batch_chapters:
+        if (
+            current_batch_pages + details["count"] > batch_size
+            and current_batch_chapters
+        ):
             # Finalize and save the current batch
             batch_doc = fitz.open()
-            batch_doc.insert_pdf(doc, from_page=current_batch_start_page - 1, to_page=current_batch_end_page - 1)
+            batch_doc.insert_pdf(
+                doc,
+                from_page=current_batch_start_page - 1,
+                to_page=current_batch_end_page - 1,
+            )
             filename = f"batch-{len(batches) + 1:02d}-{sanitize_filename(current_batch_start_title)}-to-{sanitize_filename(current_batch_last_title)}.pdf"
             output_path = os.path.join(output_dir, filename)
             batch_doc.save(output_path)
             batch_doc.close()
             print(f"  - Extracted batch to '{output_path}'")
             batches.append(current_batch_chapters)
-            
+
             # Start a new batch
             current_batch_chapters = []
             current_batch_pages = 0
-            current_batch_start_page = details['start']
-            current_batch_start_title = details['title']
+            current_batch_start_page = details["start"]
+            current_batch_start_title = details["title"]
 
-        current_batch_chapters.append(details['title'])
-        current_batch_pages += details['count']
-        current_batch_end_page = details['end']
-        current_batch_last_title = details['title']
+        current_batch_chapters.append(details["title"])
+        current_batch_pages += details["count"]
+        current_batch_end_page = details["end"]
+        current_batch_last_title = details["title"]
 
     # Save the last remaining batch
     if current_batch_chapters:
         batch_doc = fitz.open()
-        batch_doc.insert_pdf(doc, from_page=current_batch_start_page - 1, to_page=current_batch_end_page - 1)
+        batch_doc.insert_pdf(
+            doc,
+            from_page=current_batch_start_page - 1,
+            to_page=current_batch_end_page - 1,
+        )
         filename = f"batch-{len(batches) + 1:02d}-{sanitize_filename(current_batch_start_title)}-to-{sanitize_filename(current_batch_last_title)}.pdf"
         output_path = os.path.join(output_dir, filename)
         batch_doc.save(output_path)
         batch_doc.close()
         print(f"  - Extracted batch to '{output_path}'")
+
 
 # --- Main Script ---
 if __name__ == "__main__":
@@ -136,7 +156,7 @@ if __name__ == "__main__":
 
         # --- Mode Execution ---
         if len(sys.argv) == 4:
-            if sys.argv[1].lower() == 'batch' and sys.argv[2].isdigit():
+            if sys.argv[1].lower() == "batch" and sys.argv[2].isdigit():
                 batch_size = int(sys.argv[2])
                 extract_chapters_in_batches(doc, toc, batch_size, output_dir)
             else:
