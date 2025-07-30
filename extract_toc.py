@@ -52,20 +52,44 @@ def get_toc(pdf_path):
             x_kde = np.linspace(min(all_sizes), max(all_sizes), 1000)
             y_kde = kde(x_kde)
             
+            hist, bin_edges = np.histogram(all_sizes_array, bins=50)
+            bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+            customdata = list(zip(bin_edges[:-1], bin_edges[1:]))
+            bin_width = bin_edges[1] - bin_edges[0] if len(bin_edges) > 1 else 1
+            
             fig_raw = go.Figure()
-            fig_raw.add_trace(go.Histogram(x=all_sizes, nbinsx=50, marker=dict(color='rgba(0, 123, 255, 0.7)', line=dict(color='rgba(0, 123, 255, 1)', width=1)), name='Histogram'))
-            fig_raw.add_trace(go.Scatter(x=x_kde, y=y_kde * len(all_sizes) * (max(all_sizes) - min(all_sizes)) / 50, mode='lines', line=dict(color='red', width=2), name='KDE'))
+            fig_raw.add_trace(
+                go.Bar(
+                    x=bin_centers,
+                    y=hist,
+                    width=bin_width,
+                    marker=dict(color='rgba(0, 123, 255, 0.7)', line=dict(color='rgba(0, 123, 255, 1)', width=1)),
+                    name='Histogram',
+                    customdata=customdata,
+                    hovertemplate='Bin: %{customdata[0]:.3f} - %{customdata[1]:.3f}<br>Frequency: %{y}<extra></extra>'
+                )
+            )
+            fig_raw.add_trace(
+                go.Scatter(
+                    x=x_kde, 
+                    y=y_kde * len(all_sizes) * bin_width, 
+                    mode='lines', 
+                    line=dict(color='red', width=2), 
+                    name='KDE',
+                    hovertemplate='Font Size: %{x:.3f}<br>Scaled KDE Value: %{y:.1f}<extra></extra>'
+                )
+            )
             
             mean_size = statistics.mean(all_sizes)
             median_size = statistics.median(all_sizes)
             threshold = median_size * 1.1
-            fig_raw.add_vline(x=mean_size, line=dict(color='green', width=2), annotation_text='Mean', annotation_position='top left')
-            fig_raw.add_vline(x=median_size, line=dict(color='orange', width=2), annotation_text='Median', annotation_position='top left')
-            fig_raw.add_vline(x=threshold, line=dict(color='purple', width=2), annotation_text='Threshold', annotation_position='top left')
+            fig_raw.add_vline(x=mean_size, line=dict(color='rgba(0,128,0,0.25)', width=2, dash='dash'), annotation_text='Mean', annotation_position='top left')
+            fig_raw.add_vline(x=median_size, line=dict(color='rgba(255,165,0,0.25)', width=2, dash='dash'), annotation_text='Median', annotation_position='top left')
+            fig_raw.add_vline(x=threshold, line=dict(color='rgba(128,0,128,0.25)', width=2, dash='dash'), annotation_text='Threshold', annotation_position='top left')
             
             sorted_freq = sorted(raw_freq.items(), key=lambda x: x[1], reverse=True)[:5]
             for i, (size, count) in enumerate(sorted_freq):
-                fig_raw.add_annotation(x=size, y=count, text=f'Top {i+1}: Size {size:.2f}, Count {count}', showarrow=True, arrowhead=1, yshift=10)
+                fig_raw.add_annotation(x=size, y=count, text=f'Top {i+1}: {size:.2f} ({count})', showarrow=True, arrowhead=1, yshift=10)
             
             fig_raw.update_layout(title='Interactive Raw Font Size Distribution with KDE', xaxis_title='Font Size', yaxis_title='Frequency', barmode='overlay', hovermode='x unified', legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01))
             fig_raw.write_html('raw_font_size_dist.html')
