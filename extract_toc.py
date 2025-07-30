@@ -65,11 +65,11 @@ def get_toc(pdf_path):
 
             # Interactive Raw Histogram with KDE using Plotly
             all_sizes_array = np.array(all_sizes)
-            kde = gaussian_kde(all_sizes_array)
-            x_kde = np.linspace(min(all_sizes), max(all_sizes), 1000)
-            y_kde = kde(x_kde)
+            kde_01 = gaussian_kde(all_sizes_array,bw_method=0.1)
+            x_kde_01 = np.linspace(min(all_sizes), max(all_sizes), 1000)
+            y_kde_01 = kde_01(x_kde_01)
 
-            hist, bin_edges = np.histogram(all_sizes_array, bins=50)
+            hist, bin_edges = np.histogram(all_sizes_array, bins=100)
             bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
             customdata = list(zip(bin_edges[:-1], bin_edges[1:]))
             bin_width = bin_edges[1] - bin_edges[0] if len(bin_edges) > 1 else 1
@@ -81,8 +81,8 @@ def get_toc(pdf_path):
                     y=hist,
                     width=bin_width,
                     marker=dict(
-                        color="rgba(0, 123, 255, 0.7)",
-                        line=dict(color="rgba(0, 123, 255, 1)", width=1),
+                        color="rgba(0, 123, 255, 0.3)",
+                        line=dict(color="rgba(0, 123, 255, 0.5)", width=1),
                     ),
                     name="Histogram",
                     customdata=customdata,
@@ -91,12 +91,12 @@ def get_toc(pdf_path):
             )
             fig_raw.add_trace(
                 go.Scatter(
-                    x=x_kde,
-                    y=y_kde * len(all_sizes) * bin_width,
+                    x=x_kde_01,
+                    y=y_kde_01 * len(all_sizes) * bin_width,
                     mode="lines",
-                    line=dict(color="red", width=2),
+                    line=dict(color="green", width=2),
                     name="KDE",
-                    hovertemplate="Font Size: %{x:.3f}<br>Scaled KDE Value: %{y:.1f}<extra></extra>",
+                    hovertemplate="KDE 0.1: %{y:.1f}<extra></extra>",
                 )
             )
 
@@ -113,13 +113,13 @@ def get_toc(pdf_path):
                 x=median_size,
                 line=dict(color="rgba(255,165,0,0.25)", width=2, dash="dash"),
                 annotation_text="Median",
-                annotation_position="top left",
+                annotation_position="top center",
             )
             fig_raw.add_vline(
                 x=threshold,
                 line=dict(color="rgba(128,0,128,0.25)", width=2, dash="dash"),
                 annotation_text="Threshold",
-                annotation_position="top left",
+                annotation_position="top right",
             )
 
             sorted_freq = sorted(raw_freq.items(), key=lambda x: x[1], reverse=True)[:5]
