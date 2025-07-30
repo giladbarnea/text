@@ -1,4 +1,4 @@
-#!/usr/bin/env /opt/homebrew/bin/uvx --with=PyMuPDF,matplotlib,seaborn,plotly,scipy python3
+#!/usr/bin/env /opt/homebrew/bin/uvx --with=PyMuPDF,plotly,scipy,IPython python3
 
 # Imports grouped by domain
 # Parsing: import fitz  # PyMuPDF
@@ -60,15 +60,16 @@ def parse_pdf_document(pdf_path):
                             size = span["size"]
                             all_font_sizes.append(size)
                             is_bold = (span["flags"] & 16) != 0
-                            if (
-                                len(text.split()) < 10 and len(text) > 1
-                            ):  # Likely heading heuristic
-                                potential_headings.append((
-                                    page_num + 1,
-                                    size,
-                                    text,
-                                    is_bold,
-                                ))
+                            if len(text) > 1 and (len(text.split()) < 10 or is_bold):
+                                # Likely heading heuristic
+                                potential_headings.append(
+                                    (
+                                        page_num + 1,
+                                        size,
+                                        text,
+                                        is_bold,
+                                    )
+                                )
 
     doc.close()
     return {
@@ -325,14 +326,26 @@ def font_strategy(raw_data, analysis_data):
 
     # Assign levels (font-specific heuristics)
     inferred_toc = []
+    from collections import defaultdict
+
+    foo = defaultdict(list)
     for page, size, text, is_bold in unique_headings:
-        if size > threshold:
+        if size > threshold or is_bold:
             if size >= max_size * 0.9:
                 level = 1
             else:
                 level = 2
+                foo[size].append(f"{text[:20]!r:<23} │ {is_bold=:<9} │ p.{page:>2}")
+            # print(f"{text[:20]!r}, {size=}, {is_bold=} ({page})")
             inferred_toc.append([level, text, page])
+    for s, uh in sorted(foo.items()):
+        print(f"--- {s=}, #{len(uh)} ---")
+        for h in uh:
+            print(f" {h}")
 
+    from IPython import embed
+
+    embed()
     # Sort by page
     inferred_toc.sort(key=lambda x: x[2])
     return inferred_toc
