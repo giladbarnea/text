@@ -4,98 +4,101 @@ import pytest
 
 # Assuming the parser script is named 'parser.py' and is importable;
 # adjust the import if needed (e.g., from .parser import get_toc)
-from extract_toc import get_toc
+from extract_toc import get_toc, Page, Text
 
 # Hardcode the PDF path for testing; replace with the actual path to your test PDF
 PDF_PATH = Path(__file__).parent / "what-foundational-models-found.pdf"
 
 # Lists based on original labeled data
 # "yes" cases: true headings that MUST be present in the inferred TOC
-EXPECTED_PRESENT = [
-    'What Has a Foundatio',  # doc title
-    'Using Inductive Bias',  # doc title
-    'Abstract',              # H1
-    '1. Introduction',       # H1
-    '2. Framework',          # H1
-    'Data and tasks.',       # H4
-    'Foundation models:',    # H4
-    'World model:',          # H4
-    '2.1. Comparing found',  # H2
-    '2.2. Special case: f',  # H2
-    '2.3. Inductive bias ',  # H2
-    'Extrapolative predic',  # H4
-    'Oracle foundation mo',  # H4
-    'Inductive bias towar',  # H4
-    '3. Orbital Mechanics',  # H1
-    'Background.',           # H4
-    'Data and pre-trainin',  # H4
-    'Has the model recove',  # H4
-    '4. Other Application',  # H1
-    'Lattice.',              # H4
-    'Othello.',              # H4
-    'Models.',               # H4
-    'Inductive bias probe',  # H4
-    'What are the inducti',  # H4
-    '5. Related Work',       # H1
-    '6. Conclusion',         # H1
-    'Acknowledgments',       # H1
-    'References',            # H1
-    'A. Model and Trainin',  # H1
-    'B. Metric Implementa',  # H1
-    'B.1. Physics',          # H2
-    'B.2. Lattice and Oth',  # H2
-    'C. Force Prediction ',  # H1
-    'Force vector predict',  # H4
-    'Force magnitude pred',  # H4
-    'D. LLM Physics Exper',  # H1
-    'E. Inductive Bias Ab',  # H1
-    'F. Additional Transf',  # H1
-    'G. Next Token Perfor',  # H1
-    'H. What are models u',  # H1
+EXPECTED_PRESENT: list[tuple[Text, Page]] = [
+    ("What Has a Foundatio", 1),
+    ("Using Inductive Bias", 1),
+    ("Abstract", 1),
+    ("1. Introduction", 1),
+    ("2. Framework", 2),
+    ("Data and tasks.", 2),
+    ("Foundation models:", 2),
+    ("World model:", 2),
+    ("2.1. Comparing found", 2),
+    ("2.2. Special case: f", 3),
+    ("2.3. Inductive bias ", 4),
+    ("Extrapolative predic", 5),
+    ("Oracle foundation mo", 5),
+    ("Inductive bias towar", 5),
+    ("3. Orbital Mechanics", 5),
+    ("Background.", 5),
+    ("Data and pre-trainin", 6),
+    ("Has the model recove", 6),
+    ("4. Other Application", 7),
+    ("Lattice.", 7),
+    ("Othello.", 7),
+    ("Models.", 7),
+    ("Inductive bias probe", 8),
+    ("What are the inducti", 8),
+    ("5. Related Work", 9),
+    ("6. Conclusion", 10),
+    ("Acknowledgments", 10),
+    ("References", 10),
+    ("A. Model and Trainin", 13),
+    ("B. Metric Implementa", 13),
+    ("B.1. Physics", 13),
+    ("B.2. Lattice and Oth", 13),
+    ("C. Force Prediction ", 14),
+    ("Force vector predict", 14),
+    ("Force magnitude pred", 14),
+    ("D. LLM Physics Exper", 15),
+    ("LLM Prompt", 17),
+    ("E. Inductive Bias Ab", 17),
+    ("F. Additional Transf", 17),
+    ("G. Next Token Perfor", 17),
+    ("H. What are models u", 19),
 ]
 
 # "no" + "kinda" cases: false positives that MUST NOT be present in the inferred TOC
-EXPECTED_ABSENT = [
-    'Keyon Vafa',            # no: author
-    'Peter G. Chang',        # no: author
-    'Ashesh Rambachan',      # no: author
-    'Sendhil Mullainathan',  # no: author
-    'Ground-truth law',      # no: table header (appears in multiple places/sizes)
-    'Estimated laws',        # no: table header (appears in multiple places/sizes)
-    'Lattice (5 States)',    # no: table header
-    'Othello',               # no: table header (note: distinct from 'Othello.')
-    'Majority Tiles',        # no: table header
-    'Board Balance',         # no: table header
-    'Edge Balance',          # no: table header
-    'IB Correlation',        # no: table header
-    'Per-orbit mean',        # no: table header
-    'Previous position',     # no: table header
-    '04',                    # no: table cell
-    '14',                    # no: table cell
-    '07',                    # no: table cell
-    '11',                    # no: table cell
-    '75',                    # no: table cell
-    '56',                    # no: table cell
-    'Lattice',               # no: table header
-    'oracle model',          # no: tricky false positive
-    'Inductive bias probe',  # kinda: chart title (bold=0 in original)
-    'Example: Finite stat',  # kinda: chart title (bold=0 in original)
-    'Oracle model',          # kinda: chart title (bold=0 in original)
-    # Add any other "no" or "kinda" from original data if missed
+EXPECTED_ABSENT: list[tuple[Text, Page]] = [
+    ("Keyon Vafa", 1),
+    ("Peter G. Chang", 1),
+    ("Ashesh Rambachan", 1),
+    ("Sendhil Mullainathan", 1),
+    ("World model:", 3),
+    ("Inductive bias probe", 3),
+    ("Foundation model:", 3),
+    ("Example: Finite stat", 4),
+    ("Ground-truth law", 7),
+    ("Estimated laws", 7),
+    ("Lattice (5 States)", 8),
+    ("Othello", 8),
+    ("Oracle model", 15),
+    ("oracle model", 15),
+    ("Ground-truth law", 16),
+    ("Estimated laws", 16),
+    ("Per-orbit mean", 18),
+    ("Previous position", 18),
+    ("04", 18),
+    ("14", 18),
+    ("07", 18),
+    ("11", 18),
+    ("75", 18),
+    ("56", 18),
+    ("Lattice", 19),
+    ("Othello", 19),
+    ("Majority Tiles", 19),
+    ("Board Balance", 19),
+    ("Edge Balance", 19),
+    ("IB Correlation", 19),
 ]
 
 @pytest.fixture(scope="session")
 def inferred_toc():
     """Fixture to get the inferred TOC once for all tests."""
     toc = get_toc(PDF_PATH)
-    # Extract just the titles (text) for simple membership checks
-    titles = {entry[1].strip() for entry in toc}
-    return titles
+    return toc
 
-@pytest.mark.parametrize("title", EXPECTED_PRESENT)
-def test_heading_present(inferred_toc, title):
-    assert any(entry.startswith(title) for entry in inferred_toc), f"Expected heading '{title}' is missing from TOC"
+@pytest.mark.parametrize("title, page", EXPECTED_PRESENT)
+def test_heading_present(inferred_toc, title, page):
+    assert any(entry[1].strip().startswith(title) and entry[2] == page for entry in inferred_toc), f"Expected heading starting with '{title}' on page {page} is missing from TOC"
 
-@pytest.mark.parametrize("title", EXPECTED_ABSENT)
-def test_heading_absent(inferred_toc, title):
-    assert not any(entry.startswith(title) for entry in inferred_toc), f"Unexpected item '{title}' is present in TOC"
+@pytest.mark.parametrize("title, page", EXPECTED_ABSENT)
+def test_heading_absent(inferred_toc, title, page):
+    assert not any(entry[1].strip().startswith(title) and entry[2] == page for entry in inferred_toc), f"Unexpected heading starting with '{title}' on page {page} is present in TOC"
