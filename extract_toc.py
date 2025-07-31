@@ -100,7 +100,7 @@ def parse_pdf_document(pdf_path: str) -> RawData:
                             size: Size = span["size"]
                             all_font_sizes.append(size)
                             is_bold: IsBold = (span["flags"] & 16) != 0
-                            if len(text) > 1 and (len(text.split()) < 10 or is_bold):
+                            if len(text) > 1 and len(text.split()) < 10 and is_bold:
                                 # Likely heading heuristic
                                 potential_headings.append(
                                     Heading(
@@ -408,7 +408,7 @@ def font_strategy(
         size = heading.size
         text = heading.text
         is_bold = heading.is_bold
-        if size > threshold or is_bold:
+        if size > threshold and is_bold:
             if size >= max_size * 0.9:
                 level = 1
             else:
