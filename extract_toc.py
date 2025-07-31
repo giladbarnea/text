@@ -9,44 +9,58 @@ import os
 import statistics
 
 # Analysis: from collections import Counter; import statistics; import numpy as np; from scipy.stats import gaussian_kde
-from collections import Counter
+from collections import Counter, defaultdict
+from typing import TYPE_CHECKING, NamedTuple, TypedDict
 
 import fitz
-import numpy as np
 
-# Visualization: import plotly.graph_objects as go
-import plotly.graph_objects as go
-from scipy.stats import gaussian_kde
+if TYPE_CHECKING:
+    import numpy as np
 
 
 # Utility function (used in Analysis)
-def merge_sizes(sizes, delta):
+def merge_sizes(sizes: list[float], delta: float) -> dict[float, int]:
     if not sizes:
         return {}
-    sorted_unique = sorted(set(sizes))
-    merged = {}
-    current_group = [sorted_unique[0]]
+    sorted_unique: list[float] = sorted(set(sizes))
+    merged: dict[float, int] = {}
+    current_group: list[float] = [sorted_unique[0]]
     for i in range(1, len(sorted_unique)):
         if sorted_unique[i] - current_group[-1] <= delta:
             current_group.append(sorted_unique[i])
         else:
-            group_key = statistics.mean(current_group)
-            group_count = sum(Counter(sizes)[s] for s in current_group)
+            group_key: float = statistics.mean(current_group)
+            group_count: int = sum(Counter(sizes)[s] for s in current_group)
             merged[group_key] = group_count
             current_group = [sorted_unique[i]]
-    group_key = statistics.mean(current_group)
-    group_count = sum(Counter(sizes)[s] for s in current_group)
+    group_key: float = statistics.mean(current_group)
+    group_count: int = sum(Counter(sizes)[s] for s in current_group)
     merged[group_key] = group_count
     return merged
 
 
 # Domain: Document Parsing
-def parse_pdf_document(pdf_path):
-    doc = fitz.open(pdf_path)
-    embedded_toc = doc.get_toc()  # List of [level, title, page] or empty
+Heading = NamedTuple(
+    "Heading", [("page", int), ("size", float), ("text", str), ("is_bold", bool)]
+)
+RawData = TypedDict(
+    "RawData",
+    {
+        "embedded_toc": list[tuple[int, str, int]],
+        "all_font_sizes": list[float],
+        "potential_headings": list[Heading],
+    },
+)
 
-    all_font_sizes = []
-    potential_headings = []
+
+def parse_pdf_document(pdf_path) -> RawData:
+    doc = fitz.open(pdf_path)
+    embedded_toc: list[tuple[int, str, int]] = (
+        doc.get_toc()
+    )  # List of [level, title, page] or empty
+
+    all_font_sizes: list[float] = []
+    potential_headings: list[Heading] = []
 
     for page_num in range(doc.page_count):
         page = doc.load_page(page_num)
@@ -80,20 +94,41 @@ def parse_pdf_document(pdf_path):
 
 
 # Domain: Statistical Analysis (Font-specific)
+RawStats = TypedDict(
+    "RawStats",
+    {
+        "mean": float,
+        "median": float,
+        "threshold": float,
+        "frequency": Counter[float],
+        "kde_x": "np.ndarray",
+        "kde_y": "np.ndarray",
+    },
+)
+AnalysisData = TypedDict(
+    "AnalysisData", {"raw_stats": RawStats, "merged_stats": dict, "kde_data": tuple}
+)
+
+
 class FontSizeAnalyzer:
+    deltas: dict[str, float]
+
     def __init__(self, deltas=None):
         if deltas is None:
             self.deltas = {"very light": 0.01, "light": 0.1, "moderate": 0.5}
         else:
             self.deltas = deltas
 
-    def compute_raw_stats(self, sizes):
+    def compute_raw_stats(self, sizes: list[float]) -> RawStats:
+        import numpy as np
+        from scipy.stats import gaussian_kde
+
         if not sizes:
             return {}
-        raw_freq = Counter(sizes)
-        mean_size = statistics.mean(sizes)
-        median_size = statistics.median(sizes)
-        threshold = median_size * 1.1  # Font-specific threshold
+        raw_freq: Counter[float] = Counter(sizes)
+        mean_size: float = statistics.mean(sizes)
+        median_size: float = statistics.median(sizes)
+        threshold: float = median_size * 1.1  # Font-specific threshold
 
         # KDE
         sizes_array = np.array(sizes)
@@ -110,14 +145,14 @@ class FontSizeAnalyzer:
             "kde_y": y_kde,
         }
 
-    def compute_merged_stats(self, sizes):
-        merged_stats = {}
+    def compute_merged_stats(self, sizes: list[float]) -> dict[str, dict[float, int]]:
+        merged_stats: dict[str, dict[float, int]] = {}
         for label, delta in self.deltas.items():
-            merged_freq = merge_sizes(sizes, delta)
+            merged_freq: dict[float, int] = merge_sizes(sizes, delta)
             merged_stats[label] = merged_freq
         return merged_stats
 
-    def analyze(self, sizes):
+    def analyze(self, sizes: list[float]) -> AnalysisData:
         raw_stats = self.compute_raw_stats(sizes)
         merged_stats = self.compute_merged_stats(sizes)
         return {
@@ -128,15 +163,20 @@ class FontSizeAnalyzer:
 
 
 # Domain: Visualization Generation
-def generate_visualizations(analysis_data, all_font_sizes, output_dir="."):
+def generate_visualizations(
+    analysis_data: AnalysisData, all_font_sizes: list[float], output_dir: str = "."
+):
     if not all_font_sizes:
         return []
 
-    data = analysis_data
-    raw_stats = data["raw_stats"]
+    data: AnalysisData = analysis_data
+    raw_stats: RawStats = data["raw_stats"]
 
     # Helper: Create and persist raw histogram with KDE
-    def _create_and_save_raw_hist():
+    def _create_and_save_raw_hist() -> str:
+        import numpy as np
+        import plotly.graph_objects as go
+
         sizes_array = np.array(all_font_sizes)
         hist, bin_edges = np.histogram(sizes_array, bins=100)
         bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
@@ -218,7 +258,9 @@ def generate_visualizations(analysis_data, all_font_sizes, output_dir="."):
         return filename
 
     # Helper: Create and persist sorted bar chart
-    def _create_and_save_sorted_bar():
+    def _create_and_save_sorted_bar() -> str:
+        import plotly.graph_objects as go
+
         unique_sizes = sorted(raw_stats["frequency"].keys())
         counts = [raw_stats["frequency"][size] for size in unique_sizes]
 
@@ -246,6 +288,8 @@ def generate_visualizations(analysis_data, all_font_sizes, output_dir="."):
 
     # Helper: Create and persist merged distributions (one per delta)
     def _create_and_save_merged():
+        import plotly.graph_objects as go
+
         merged_files = []
         for label, merged_freq in data["merged_stats"].items():
             merged_sizes = sorted(merged_freq.keys())
@@ -308,13 +352,16 @@ def font_strategy(raw_data, analysis_data):
     ):  # Clue: No data available
         return []
 
-    # Deduplicate by text and page
-    unique_headings = []
-    seen = set()
+    # Two-pass to select only the titles that appear exactly once.
+    heading_counts = {}
     for page, size, text, is_bold in potential_headings:
-        key = (text, page)
-        if key not in seen:
-            seen.add(key)
+        key = (text, size, is_bold)
+        heading_counts[key] = heading_counts.get(key, 0) + 1
+
+    unique_headings = []
+    for page, size, text, is_bold in potential_headings:
+        key = (text, size, is_bold)
+        if heading_counts[key] == 1:
             unique_headings.append((page, size, text, is_bold))
 
     if not unique_headings:
@@ -326,22 +373,34 @@ def font_strategy(raw_data, analysis_data):
 
     # Assign levels (font-specific heuristics)
     inferred_toc = []
-    from collections import defaultdict
 
-    foo = defaultdict(list)
+    bysize = defaultdict(list)
+    bypage = defaultdict(list)
     for page, size, text, is_bold in unique_headings:
         if size > threshold or is_bold:
             if size >= max_size * 0.9:
                 level = 1
             else:
                 level = 2
-                foo[size].append(f"{text[:20]!r:<23} │ {is_bold=:<9} │ p.{page:>2}")
+                bysize[size].append(f"{text[:20]!r:<23} │ {is_bold=:<1} │ p.{page:>2}")
+                bypage[page].append(
+                    f"{text[:20]!r:<23} │ {is_bold=:<1} │ sz {size:>3.2f}"
+                )
             # print(f"{text[:20]!r}, {size=}, {is_bold=} ({page})")
             inferred_toc.append([level, text, page])
-    for s, uh in sorted(foo.items()):
-        print(f"--- {s=}, #{len(uh)} ---")
-        for h in uh:
-            print(f" {h}")
+    print("\n\n==== Unique headings by SIZE ====")
+    for sz, uniqhd in sorted(bysize.items()):
+        print(
+            f"--- size={sz}, {len(uniqhd)} items ({len(uniqhd) / len(unique_headings):.2%}) ---"
+        )
+        for hd in uniqhd:
+            print(f" {hd}")
+
+    print("\n\n==== Unique headings by PAGE ====")
+    for pg, uniqhd in sorted(bypage.items()):
+        print(f"--- page={pg}, {len(uniqhd)} items ---")
+        for hd in uniqhd:
+            print(f" {hd}")
 
     from IPython import embed
 
