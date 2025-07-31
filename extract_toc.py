@@ -140,6 +140,10 @@ class FontSizeAnalyzer:
         median_size: Size = statistics.median(sizes)
         threshold: Size = median_size * 1.1  # Font-specific threshold
 
+        print(
+            f"mean_size={mean_size}, median_size={median_size}, threshold={threshold}, raw_freq={raw_freq}"
+        )
+
         # KDE
         sizes_array = np.array(sizes)
         kde = gaussian_kde(sizes_array, bw_method=0.1)
@@ -399,7 +403,11 @@ def font_strategy(
 
     bysize: defaultdict[Size, list[str]] = defaultdict(list)
     bypage: defaultdict[Page, list[str]] = defaultdict(list)
-    for page, size, text, is_bold in unique_headings:
+    for heading in unique_headings:
+        page = heading.page
+        size = heading.size
+        text = heading.text
+        is_bold = heading.is_bold
         if size > threshold or is_bold:
             if size >= max_size * 0.9:
                 level = 1
@@ -411,11 +419,18 @@ def font_strategy(
                 )
             inferred_toc.append((HeadingLevel(level), text, page))
 
+    import bisect
+
+    all_font_sizes = sorted(raw_data.get("all_font_sizes", []))
+    all_fonts_count = len(all_font_sizes)
+
     print("\n\n==== Unique headings by SIZE ====")
     for sz, uniqhd in sorted(bysize.items()):
-        print(
-            f"--- size={sz}, {len(uniqhd)} items ({len(uniqhd) / len(unique_headings):.2%}) ---"
+        count_smaller = bisect.bisect_left(all_font_sizes, sz)
+        percentile = (
+            (count_smaller / all_fonts_count) * 100 if all_fonts_count > 0 else 0
         )
+        print(f"--- size={sz}, percentile={percentile:.2f}%, {len(uniqhd)} items ---")
         for hd in uniqhd:
             print(f" {hd}")
 
