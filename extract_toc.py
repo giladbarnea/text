@@ -79,9 +79,7 @@ def merge_sizes(sizes: list[Size], delta: float) -> dict[Size, int]:
 
 
 # Domain: Document Parsing
-
-
-def parse_pdf_document(pdf_path) -> RawData:
+def parse_pdf_document(pdf_path: str) -> RawData:
     doc = fitz.open(pdf_path)
     embedded_toc: list[tuple[HeadingLevel, Text, Page]] = (
         doc.get_toc()
@@ -123,10 +121,10 @@ def parse_pdf_document(pdf_path) -> RawData:
 
 # Domain: Statistical Analysis (Font-specific)
 class FontSizeAnalyzer:
-    deltas: dict[str, float]
+    deltas: dict[str, Size]
 
-    def __init__(self, deltas=None):
-        if deltas is None:
+    def __init__(self, deltas: dict[str, Size] = None) -> None:
+        if not deltas:
             self.deltas = {"very light": 0.01, "light": 0.1, "moderate": 0.5}
         else:
             self.deltas = deltas
@@ -148,14 +146,16 @@ class FontSizeAnalyzer:
         x_kde = np.linspace(min(sizes), max(sizes), 1000)
         y_kde = kde(x_kde)
 
-        return {
-            "mean": mean_size,
-            "median": median_size,
-            "threshold": threshold,
-            "frequency": raw_freq,
-            "kde_x": x_kde,
-            "kde_y": y_kde,
-        }
+        return RawStats(
+            {
+                "mean": mean_size,
+                "median": median_size,
+                "threshold": threshold,
+                "frequency": raw_freq,
+                "kde_x": x_kde,
+                "kde_y": y_kde,
+            }
+        )
 
     def compute_merged_stats(self, sizes: list[Size]) -> dict[str, dict[Size, int]]:
         """Maps labels to size count."""
@@ -466,20 +466,17 @@ def main() -> None:
         print(f"Error: File not found at {args.pdf_path}")
         return
 
-    try:
-        toc: list[tuple[HeadingLevel, Text, Page]] = get_toc(
-            args.pdf_path, visualize=args.visualize
-        )
-        pdf_name = os.path.basename(args.pdf_path)
+    toc: list[tuple[HeadingLevel, Text, Page]] = get_toc(
+        args.pdf_path, visualize=args.visualize
+    )
+    pdf_name = os.path.basename(args.pdf_path)
 
-        if not toc:
-            print(f"No table of contents found or could be inferred in '{pdf_name}'.")
-        else:
-            print(f"Table of Contents for '{pdf_name}' (inferred if no embedded TOC):")
-            for level, title, page in toc:
-                print(f"{'  ' * (level - 1)}{title} (Page {page})")
-    except Exception as e:
-        print(f"An error occurred: {e!r}")
+    if not toc:
+        print(f"No table of contents found or could be inferred in '{pdf_name}'.")
+    else:
+        print(f"Table of Contents for '{pdf_name}' (inferred if no embedded TOC):")
+        for level, title, page in toc:
+            print(f"{'  ' * (level - 1)}{title} (Page {page})")
 
 
 if __name__ == "__main__":
