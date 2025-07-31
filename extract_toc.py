@@ -394,6 +394,11 @@ def font_strategy(
     ):  # Clue: No data available
         return []
 
+    # Add access to required data for Phase 1 filters
+    all_font_sizes = sorted(raw_data.get("all_font_sizes", []))
+    all_fonts_count = len(all_font_sizes)
+    font_freq = analysis_data["raw_stats"].get("frequency", Counter())
+
     # Two-pass to select only the titles that appear exactly once.
     heading_counts: dict[tuple[Text, Size, IsBold], int] = {}
     for heading in potential_headings:
@@ -414,19 +419,32 @@ def font_strategy(
     h1_threshold: Size = analysis_data["raw_stats"].get("h1_threshold", 0)
     general_heading_threshold: Size = analysis_data["raw_stats"].get("general_heading_threshold", 0)
 
+    # Define filter thresholds for Phase 1
+    PERCENTILE_THRESHOLD = 60.0  # Keep sizes >= 60th percentile
+    FREQ_THRESHOLD = 300  # Keep if frequency < 300 (tighten to 100 if desired)
+
     # Assign levels (font-specific heuristics)
     inferred_toc: list[tuple[HeadingLevel, Text, Page]] = []
 
     bysize: defaultdict[Size, list[str]] = defaultdict(list)
     bypage: defaultdict[Page, list[str]] = defaultdict(list)
+    
+    import bisect
+    
     for heading in unique_headings:
         size = heading.size
         is_bold = heading.is_bold
-        # TODO: add filters:
-        #  1. filter out headings in predetermined low font-size percentile ranges
-        #  2. filter out headings with too high frequency
-        if size < general_heading_threshold or not is_bold:
+        
+        # Compute percentile for this heading's font size
+        count_smaller = bisect.bisect_left(all_font_sizes, size)
+        percentile = (count_smaller / all_fonts_count) * 100 if all_fonts_count > 0 else 0
+        
+        # Apply Phase 1 filters: size threshold, bold requirement, percentile filter, and frequency filter
+        if (size < general_heading_threshold or not is_bold or
+            percentile < PERCENTILE_THRESHOLD or
+            font_freq.get(size, 0) >= FREQ_THRESHOLD):
             continue
+            
         page = heading.page
         text = heading.text
         if size >= h1_threshold:
@@ -439,11 +457,7 @@ def font_strategy(
         )
         inferred_toc.append((HeadingLevel(level), text, page))
 
-    import bisect
-
-    all_font_sizes = sorted(raw_data.get("all_font_sizes", []))
-    all_fonts_count = len(all_font_sizes)
-
+    # Move the all_font_sizes variables before the debug print section
     print("\n\n==== Unique headings by SIZE ====")
     # TODO: move as much percentile logic as possible to `compute_raw_stats()`
     for sz, uniqhd in sorted(bysize.items()):
