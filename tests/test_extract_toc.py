@@ -11,49 +11,71 @@ PDF_PATH = Path(__file__).parent / "what-foundational-models-found.pdf"
 
 # Lists based on original labeled data
 # "yes" cases: true headings that MUST be present in the inferred TOC
-EXPECTED_PRESENT: list[tuple[Text, Page]] = [
+
+# H0 - Document titles (font size ~14.35)
+EXPECTED_PRESENT_H0: list[tuple[Text, Page]] = [
     ("What Has a Foundatio", 1),
     ("Using Inductive Bias", 1),
+]
+
+# H1 - Major sections (font size ~11.96)
+EXPECTED_PRESENT_H1: list[tuple[Text, Page]] = [
     ("Abstract", 1),
     ("1. Introduction", 1),
     ("2. Framework", 2),
-    ("Data and tasks.", 2),
-    ("Foundation models:", 2),
-    ("World model:", 2),
-    ("2.1. Comparing found", 2),
-    ("2.2. Special case: f", 3),
-    ("2.3. Inductive bias ", 4),
-    ("Extrapolative predic", 5),
-    ("Oracle foundation mo", 5),
-    ("Inductive bias towar", 5),
     ("3. Orbital Mechanics", 5),
-    ("Background.", 5),
-    ("Data and pre-trainin", 6),
-    ("Has the model recove", 6),
     ("4. Other Application", 7),
-    ("Lattice.", 7),
-    ("Othello.", 7),
-    ("Models.", 7),
-    ("Inductive bias probe", 8),
-    ("What are the inducti", 8),
     ("5. Related Work", 9),
     ("6. Conclusion", 10),
     ("Acknowledgments", 10),
     ("References", 10),
     ("A. Model and Trainin", 13),
     ("B. Metric Implementa", 13),
-    ("B.1. Physics", 13),
-    ("B.2. Lattice and Oth", 13),
     ("C. Force Prediction ", 14),
-    ("Force vector predict", 14),
-    ("Force magnitude pred", 14),
     ("D. LLM Physics Exper", 15),
-    ("LLM Prompt", 17),
     ("E. Inductive Bias Ab", 17),
     ("F. Additional Transf", 17),
     ("G. Next Token Perfor", 17),
     ("H. What are models u", 19),
 ]
+
+# H2 - Subsections (font size ~9.96)
+EXPECTED_PRESENT_H2: list[tuple[Text, Page]] = [
+    ("2.1. Comparing found", 2),
+    ("2.2. Special case: f", 3),
+    ("2.3. Inductive bias ", 4),
+    ("B.1. Physics", 13),
+    ("B.2. Lattice and Oth", 13),
+    ("LLM Prompt", 17),
+]
+
+# H4 - Sub-subsections (font size ~9.9-10.1)
+EXPECTED_PRESENT_H4: list[tuple[Text, Page]] = [
+    ("Data and tasks.", 2),
+    ("Foundation models:", 2),
+    ("World model:", 2),
+    ("Extrapolative predic", 5),
+    ("Oracle foundation mo", 5),
+    ("Inductive bias towar", 5),
+    ("Background.", 5),
+    ("Data and pre-trainin", 6),
+    ("Has the model recove", 6),
+    ("Lattice.", 7),
+    ("Othello.", 7),
+    ("Models.", 7),
+    ("Inductive bias probe", 8),
+    ("What are the inducti", 8),
+    ("Force vector predict", 14),
+    ("Force magnitude pred", 14),
+]
+
+# Combined list for backward compatibility
+EXPECTED_PRESENT: list[tuple[Text, Page]] = (
+    EXPECTED_PRESENT_H0 + 
+    EXPECTED_PRESENT_H1 + 
+    EXPECTED_PRESENT_H2 + 
+    EXPECTED_PRESENT_H4
+)
 
 # "no" + "kinda" cases: false positives that MUST NOT be present in the inferred TOC
 EXPECTED_ABSENT: list[tuple[Text, Page]] = [
