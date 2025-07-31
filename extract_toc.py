@@ -1,4 +1,4 @@
-#!/usr/bin/env /opt/homebrew/bin/uvx --with=PyMuPDF,plotly,scipy,IPython python3
+#!/usr/bin/env /opt/homebrew/bin/uvx --with=PyMuPDF,plotly,scipy python3.13
 
 # Imports grouped by domain
 # Parsing: import fitz  # PyMuPDF

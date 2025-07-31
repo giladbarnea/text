@@ -1,5 +1,5 @@
-#!/usr/bin/env uvx --with=PyMuPDF,plotly,scipy,IPython,pytest python3
-
+#!/usr/bin/env /opt/homebrew/bin/uvx --with=PyMuPDF,plotly,scipy,pytest pytest
+from pathlib import Path
 import pytest
 
 # Assuming the parser script is named 'parser.py' and is importable;
@@ -7,7 +7,7 @@ import pytest
 from extract_toc import get_toc
 
 # Hardcode the PDF path for testing; replace with the actual path to your test PDF
-PDF_PATH = 'path/to/your/test.pdf'  # e.g., 'example.pdf'
+PDF_PATH = Path(__file__).parent / "what-foundational-models-found.pdf"
 
 # Lists based on original labeled data
 # "yes" cases: true headings that MUST be present in the inferred TOC
