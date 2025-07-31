@@ -41,7 +41,10 @@ RawStats = TypedDict(
     {
         "mean": Size,
         "median": Size,
-        "threshold": Size,
+        "some_threshold": Size,
+        "general_heading_threshold": Size,
+        "max_size": Size,
+        "h1_threshold": Size,
         "frequency": Counter[Size],
         "kde_x": "np.ndarray",
         "kde_y": "np.ndarray",
@@ -83,7 +86,7 @@ def parse_pdf_document(pdf_path: str) -> RawData:
     doc = fitz.open(pdf_path)
     embedded_toc: list[tuple[HeadingLevel, Text, Page]] = (
         doc.get_toc()
-    )  # List of [level, title, page] or empty
+    )
 
     all_font_sizes: list[Size] = []
     potential_headings: list[Heading] = []
@@ -138,10 +141,19 @@ class FontSizeAnalyzer:
         raw_freq: Counter[Size] = Counter(sizes)
         mean_size: Size = statistics.mean(sizes)
         median_size: Size = statistics.median(sizes)
-        threshold: Size = median_size * 1.1  # Font-specific threshold
+        max_size: Size = max(sizes)
+        h1_threshold: Size = max_size * 0.9
+        some_threshold: Size = median_size * 1.1  # I don't remember what this is. Keeping to see if it's useful.
+        general_heading_threshold: Size = mean_size
 
         print(
-            f"mean_size={mean_size}, median_size={median_size}, threshold={threshold}, raw_freq={raw_freq}"
+            f"mean_size={mean_size}\n"
+            f"median_size={median_size}\n"
+            f"max_size={max_size}\n"
+            f"h1_threshold={h1_threshold}\n"
+            f"some_threshold={some_threshold}\n"
+            f"general_heading_threshold={general_heading_threshold}\n"
+            f"raw_freq={raw_freq}"
         )
 
         # KDE
@@ -154,7 +166,10 @@ class FontSizeAnalyzer:
             {
                 "mean": mean_size,
                 "median": median_size,
-                "threshold": threshold,
+                "h1_threshold": h1_threshold,
+                "some_threshold": some_threshold,
+                "general_heading_threshold": general_heading_threshold,
+                "max_size": max_size,
                 "frequency": raw_freq,
                 "kde_x": x_kde,
                 "kde_y": y_kde,
@@ -226,7 +241,7 @@ def generate_visualizations(
             )
         )
 
-        # Add vlines for mean, median, threshold
+        # Add vlines for mean, median, h1_threshold
         fig.add_vline(
             x=raw_stats["mean"],
             line=dict(color="rgba(0,128,0,0.25)", width=2, dash="dash"),
@@ -240,7 +255,7 @@ def generate_visualizations(
             annotation_position="top center",
         )
         fig.add_vline(
-            x=raw_stats["threshold"],
+            x=raw_stats["h1_threshold"],
             line=dict(color="rgba(128,0,128,0.25)", width=2, dash="dash"),
             annotation_text="Threshold",
             annotation_position="top right",
@@ -394,9 +409,10 @@ def font_strategy(
     if not unique_headings:
         return []
 
-    # Find max size (font-specific)
-    max_size: Size = max(h.size for h in unique_headings)
-    threshold: float = analysis_data["raw_stats"].get("threshold", 0)
+    # max_size: Size = max(h.size for h in unique_headings)
+    some_threshold: Size = analysis_data["raw_stats"].get("some_threshold", 0)  # Don't remember what this is for
+    h1_threshold: Size = analysis_data["raw_stats"].get("h1_threshold", 0)
+    general_heading_threshold: Size = analysis_data["raw_stats"].get("general_heading_threshold", 0)
 
     # Assign levels (font-specific heuristics)
     inferred_toc: list[tuple[HeadingLevel, Text, Page]] = []
@@ -404,20 +420,24 @@ def font_strategy(
     bysize: defaultdict[Size, list[str]] = defaultdict(list)
     bypage: defaultdict[Page, list[str]] = defaultdict(list)
     for heading in unique_headings:
-        page = heading.page
         size = heading.size
-        text = heading.text
         is_bold = heading.is_bold
-        if size > threshold and is_bold:
-            if size >= max_size * 0.9:
-                level = 1
-            else:
-                level = 2
-                bysize[size].append(f"{text[:20]!r:<23} │ {is_bold=:<1} │ p.{page:>2}")
-                bypage[page].append(
-                    f"{text[:20]!r:<23} │ {is_bold=:<1} │ sz {size:>3.2f}"
-                )
-            inferred_toc.append((HeadingLevel(level), text, page))
+        # TODO: add filters:
+        #  1. filter out headings in predetermined low font-size percentile ranges
+        #  2. filter out headings with too high frequency
+        if size < general_heading_threshold or not is_bold:
+            continue
+        page = heading.page
+        text = heading.text
+        if size >= h1_threshold:
+            level = 1
+        else:  # Need granularity here
+            level = '?'
+        bysize[size].append(f"{text[:20]!r:<23} │ {level=} │ {is_bold=:<1} │ p.{page:>2}")
+        bypage[page].append(
+            f"{text[:20]!r:<23} │ {level=} │ {is_bold=:<1} │ sz {size:>3.2f}"
+        )
+        inferred_toc.append((HeadingLevel(level), text, page))
 
     import bisect
 
@@ -425,6 +445,7 @@ def font_strategy(
     all_fonts_count = len(all_font_sizes)
 
     print("\n\n==== Unique headings by SIZE ====")
+    # TODO: move as much percentile logic as possible to `compute_raw_stats()`
     for sz, uniqhd in sorted(bysize.items()):
         count_smaller = bisect.bisect_left(all_font_sizes, sz)
         percentile = (
@@ -440,9 +461,6 @@ def font_strategy(
         for hd in uniqhd:
             print(f" {hd}")
 
-    from IPython import embed
-
-    embed()
     # Sort by page
     inferred_toc.sort(key=lambda x: x[2])
     return inferred_toc
@@ -491,7 +509,7 @@ def main() -> None:
     else:
         print(f"Table of Contents for '{pdf_name}' (inferred if no embedded TOC):")
         for level, title, page in toc:
-            print(f"{'  ' * (level - 1)}{title} (Page {page})")
+            print(f"{'  ' * (len(level))}{title} (Page {page})")
 
 
 if __name__ == "__main__":
