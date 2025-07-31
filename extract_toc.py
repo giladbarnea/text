@@ -103,20 +103,20 @@ def parse_pdf_document(pdf_path: str) -> RawData:
                             if len(text) > 1 and (len(text.split()) < 10 or is_bold):
                                 # Likely heading heuristic
                                 potential_headings.append(
-                                    (
-                                        HeadingLevel(page_num + 1),
-                                        Size(size),
-                                        Text(text),
-                                        IsBold(is_bold),
+                                    Heading(
+                                        page=Page(page_num + 1),
+                                        size=Size(size),
+                                        text=Text(text),
+                                        is_bold=IsBold(is_bold),
                                     )
                                 )
 
     doc.close()
-    return {
-        "embedded_toc": embedded_toc,
-        "all_font_sizes": all_font_sizes,
-        "potential_headings": potential_headings,
-    }
+    return RawData(
+        embedded_toc=embedded_toc,
+        all_font_sizes=all_font_sizes,
+        potential_headings=potential_headings,
+    )
 
 
 # Domain: Statistical Analysis (Font-specific)
@@ -168,11 +168,11 @@ class FontSizeAnalyzer:
     def analyze(self, sizes: list[Size]) -> AnalysisData:
         raw_stats: RawStats = self.compute_raw_stats(sizes)
         merged_stats: dict[str, dict[Size, int]] = self.compute_merged_stats(sizes)
-        return {
-            "raw_stats": raw_stats,
-            "merged_stats": merged_stats,
-            "kde_data": (raw_stats.get("kde_x"), raw_stats.get("kde_y")),  # For viz
-        }
+        return AnalysisData(
+            raw_stats=raw_stats,
+            merged_stats=merged_stats,
+            kde_data=(raw_stats.get("kde_x"), raw_stats.get("kde_y")),  # For viz
+        )
 
 
 # Domain: Visualization Generation
@@ -377,21 +377,21 @@ def font_strategy(
 
     # Two-pass to select only the titles that appear exactly once.
     heading_counts: dict[tuple[Text, Size, IsBold], int] = {}
-    for page, size, text, is_bold in potential_headings:
-        key: tuple[Text, Size, IsBold] = (text, size, is_bold)
+    for heading in potential_headings:
+        key: tuple[Text, Size, IsBold] = (heading.text, heading.size, heading.is_bold)
         heading_counts[key] = heading_counts.get(key, 0) + 1
 
-    unique_headings: list[tuple[Page, Size, Text, IsBold]] = []
-    for page, size, text, is_bold in potential_headings:
-        key: tuple[Text, Size, IsBold] = (text, size, is_bold)
+    unique_headings: list[Heading] = []
+    for heading in potential_headings:
+        key: tuple[Text, Size, IsBold] = (heading.text, heading.size, heading.is_bold)
         if heading_counts[key] == 1:
-            unique_headings.append((page, size, text, is_bold))
+            unique_headings.append(heading)
 
     if not unique_headings:
         return []
 
     # Find max size (font-specific)
-    max_size: Size = max(h[1] for h in unique_headings)
+    max_size: Size = max(h.size for h in unique_headings)
     threshold: float = analysis_data["raw_stats"].get("threshold", 0)
 
     # Assign levels (font-specific heuristics)
@@ -409,7 +409,7 @@ def font_strategy(
                 bypage[page].append(
                     f"{text[:20]!r:<23} │ {is_bold=:<1} │ sz {size:>3.2f}"
                 )
-            inferred_toc.append([level, text, page])
+            inferred_toc.append((HeadingLevel(level), text, page))
 
     print("\n\n==== Unique headings by SIZE ====")
     for sz, uniqhd in sorted(bysize.items()):
