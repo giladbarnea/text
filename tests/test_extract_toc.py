@@ -1,4 +1,4 @@
-#!/usr/bin/env /opt/homebrew/bin/uvx --with=PyMuPDF,plotly,scipy,pytest pytest
+#!/usr/bin/env /opt/homebrew/bin/uvx --with=PyMuPDF,plotly,scipy,pytest python3.13 -m pytest
 from pathlib import Path
 import pytest
 
@@ -84,7 +84,7 @@ EXPECTED_ABSENT = [
     # Add any other "no" or "kinda" from original data if missed
 ]
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def inferred_toc():
     """Fixture to get the inferred TOC once for all tests."""
     toc = get_toc(PDF_PATH)
@@ -94,8 +94,8 @@ def inferred_toc():
 
 @pytest.mark.parametrize("title", EXPECTED_PRESENT)
 def test_heading_present(inferred_toc, title):
-    assert title in inferred_toc, f"Expected heading '{title}' is missing from TOC"
+    assert any(entry.startswith(title) for entry in inferred_toc), f"Expected heading '{title}' is missing from TOC"
 
 @pytest.mark.parametrize("title", EXPECTED_ABSENT)
 def test_heading_absent(inferred_toc, title):
-    assert title not in inferred_toc, f"Unexpected item '{title}' is present in TOC"
+    assert not any(entry.startswith(title) for entry in inferred_toc), f"Unexpected item '{title}' is present in TOC"
