@@ -102,7 +102,7 @@ def parse_pdf_document(pdf_path: str) -> RawData:
                             all_font_sizes.append(size)
                             is_bold: IsBold = (span["flags"] & 16) != 0
                             if len(text) > 1 and len(text.split()) < 10 and is_bold:
-                                # Likely heading heuristic
+                                # 1st (light) filter: bold sentences under 10 words.
                                 potential_headings.append(
                                     Heading(
                                         page=Page(page_num + 1),
@@ -131,6 +131,9 @@ class FontSizeAnalyzer:
             self.deltas = deltas
 
     def compute_raw_stats(self, sizes: list[Size]) -> RawStats:
+        """This is where we compute the stats that will be used for filtering.
+        "Heavy" computation lifting should be done here.
+        """
         import numpy as np
         from scipy.stats import gaussian_kde
 
@@ -162,20 +165,25 @@ class FontSizeAnalyzer:
         x_kde = np.linspace(min(sizes), max(sizes), 1000)
         y_kde = kde(x_kde)
 
-        return RawStats({
-            "mean": mean_size,
-            "median": median_size,
-            "h1_threshold": h1_threshold,
-            "some_threshold": some_threshold,
-            "general_heading_threshold": general_heading_threshold,
-            "max_size": max_size,
-            "frequency": raw_freq,
-            "kde_x": x_kde,
-            "kde_y": y_kde,
-        })
+        return RawStats(
+            {
+                "mean": mean_size,
+                "median": median_size,
+                "h1_threshold": h1_threshold,
+                "some_threshold": some_threshold,
+                "general_heading_threshold": general_heading_threshold,
+                "max_size": max_size,
+                "frequency": raw_freq,
+                "kde_x": x_kde,
+                "kde_y": y_kde,
+            }
+        )
 
     def compute_merged_stats(self, sizes: list[Size]) -> dict[str, dict[Size, int]]:
-        """Maps labels to size count."""
+        """
+        Maps labels to size count.
+        Only used for visualization.
+        """
         merged_stats: dict[str, dict[Size, int]] = {}
         for label, delta in self.deltas.items():
             merged_freq: dict[Size, int] = merge_sizes(sizes, delta)
@@ -380,12 +388,19 @@ def infer_toc(
 def embedded_strategy(
     raw_data: RawData, _: AnalysisData
 ) -> list[tuple[HeadingLevel, Text, Page]]:
+    """
+    This is the default strategy.
+    It's used if no other strategy is provided.
+    """
     return raw_data.get("embedded_toc", [])
 
 
 def font_strategy(
     raw_data: RawData, analysis_data: AnalysisData
 ) -> list[tuple[HeadingLevel, Text, Page]]:
+    """
+    Infer TOC from font sizes. Relies on the analysis data from `compute_raw_stats()`.
+    """
     potential_headings: list[Heading] = raw_data.get("potential_headings", [])
     if not potential_headings or not raw_data.get(
         "all_font_sizes"
@@ -397,7 +412,8 @@ def font_strategy(
     all_fonts_count = len(all_font_sizes)
     font_freq = analysis_data["raw_stats"].get("frequency", Counter())
 
-    # Two-pass to select only the titles that appear exactly once.
+    # Two-pass to filter for headings that appear exactly once.
+    #  Rationale is true headings don't repeat throughout the document.
     heading_counts: dict[tuple[Text, Size, IsBold], int] = {}
     for heading in potential_headings:
         key: tuple[Text, Size, IsBold] = (heading.text, heading.size, heading.is_bold)
@@ -412,7 +428,6 @@ def font_strategy(
     if not unique_headings:
         return []
 
-    # max_size: Size = max(h.size for h in unique_headings)
     analysis_data["raw_stats"].get(
         "some_threshold", 0
     )  # Don't remember what this is for
@@ -421,13 +436,20 @@ def font_strategy(
         "general_heading_threshold", 0
     )
 
-    # Define filter thresholds for Phase 1
-    PERCENTILE_THRESHOLD = 60.0  # Keep sizes >= 60th percentile
-    FREQ_THRESHOLD = 300  # Keep if frequency < 300 (tighten to 100 if desired)
+    # --- Define filter thresholds for Phase 1
+
+    # Minor tech debt: these should be in the analysis data.
+    # Note: potentially problematic because smaller headings can have the same size is regular Body text.
+    #  Therefore we should rely on other attributes to differenciate them.
+    #  Which attributes is an open question currently.
+    SIZE_PERCENTILE_MIN_THRESHOLD = 60.0
+
+    FREQ_MAX_THRESHOLD = 300
 
     # Assign levels (font-specific heuristics)
     inferred_toc: list[tuple[HeadingLevel, Text, Page]] = []
 
+    # Dicts for debugging purposes.
     bysize: defaultdict[Size, list[str]] = defaultdict(list)
     bypage: defaultdict[Page, list[str]] = defaultdict(list)
 
@@ -447,8 +469,8 @@ def font_strategy(
         if (
             size < general_heading_threshold
             or not is_bold
-            or percentile < PERCENTILE_THRESHOLD
-            or font_freq.get(size, 0) >= FREQ_THRESHOLD
+            or percentile < SIZE_PERCENTILE_MIN_THRESHOLD
+            or font_freq.get(size, 0) >= FREQ_MAX_THRESHOLD
         ):
             continue
 
@@ -466,7 +488,6 @@ def font_strategy(
         )
         inferred_toc.append((HeadingLevel(level), text, page))
 
-    # Move the all_font_sizes variables before the debug print section
     print("\n\n==== Unique headings by SIZE ====")
     # TODO: move as much percentile logic as possible to `compute_raw_stats()`
     for sz, uniqhd in sorted(bysize.items()):
