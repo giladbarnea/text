@@ -48,6 +48,8 @@ RawStats = TypedDict(
         "frequency": Counter[Size],
         "kde_x": "np.ndarray",
         "kde_y": "np.ndarray",
+        "size_percentile_min_threshold": float,
+        "freq_max_threshold": int,
     },
 )
 AnalysisData = TypedDict(
@@ -165,6 +167,19 @@ class FontSizeAnalyzer:
         x_kde = np.linspace(min(sizes), max(sizes), 1000)
         y_kde = kde(x_kde)
 
+        # Dynamic threshold computation
+        freq_values = list(raw_freq.values())
+        median_freq = statistics.median(freq_values) if freq_values else 0
+        
+        # Set percentile min to ~35% (even less aggressive than 40% to capture missing H2/H4 headings)
+        size_percentile_min_threshold = 35.0
+        
+        # Set freq max threshold to capture H2/H4 headings that may have high frequency due to similar body text sizes
+        # Use 95th percentile of frequencies or minimum of 1400 to allow high-frequency headings
+        sorted_freq_values = sorted(freq_values)
+        freq_95th_percentile = sorted_freq_values[int(0.95 * len(sorted_freq_values))] if sorted_freq_values else 0
+        freq_max_threshold = max(1400, freq_95th_percentile)
+
         return RawStats(
             {
                 "mean": mean_size,
@@ -176,6 +191,8 @@ class FontSizeAnalyzer:
                 "frequency": raw_freq,
                 "kde_x": x_kde,
                 "kde_y": y_kde,
+                "size_percentile_min_threshold": size_percentile_min_threshold,
+                "freq_max_threshold": freq_max_threshold,
             }
         )
 
@@ -437,14 +454,9 @@ def font_strategy(
     )
 
     # --- Define filter thresholds for Phase 1
-
-    # Minor tech debt: these should be in the analysis data.
-    # Note: potentially problematic because smaller headings can have the same size is regular Body text.
-    #  Therefore we should rely on other attributes to differenciate them.
-    #  Which attributes is an open question currently.
-    SIZE_PERCENTILE_MIN_THRESHOLD = 60.0
-
-    FREQ_MAX_THRESHOLD = 300
+    # Extract dynamic thresholds from analysis data
+    size_percentile_min_threshold = analysis_data["raw_stats"].get("size_percentile_min_threshold", 35.0)
+    freq_max_threshold = analysis_data["raw_stats"].get("freq_max_threshold", 1400)
 
     # Assign levels (font-specific heuristics)
     inferred_toc: list[tuple[HeadingLevel, Text, Page]] = []
@@ -469,8 +481,8 @@ def font_strategy(
         if (
             size < general_heading_threshold
             or not is_bold
-            or percentile < SIZE_PERCENTILE_MIN_THRESHOLD
-            or font_freq.get(size, 0) >= FREQ_MAX_THRESHOLD
+            or percentile < size_percentile_min_threshold
+            or font_freq.get(size, 0) >= freq_max_threshold
         ):
             continue
 
