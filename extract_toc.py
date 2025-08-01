@@ -84,9 +84,7 @@ def merge_sizes(sizes: list[Size], delta: float) -> dict[Size, int]:
 # Domain: Document Parsing
 def parse_pdf_document(pdf_path: str) -> RawData:
     doc = fitz.open(pdf_path)
-    embedded_toc: list[tuple[HeadingLevel, Text, Page]] = (
-        doc.get_toc()
-    )
+    embedded_toc: list[tuple[HeadingLevel, Text, Page]] = doc.get_toc()
 
     all_font_sizes: list[Size] = []
     potential_headings: list[Heading] = []
@@ -143,7 +141,9 @@ class FontSizeAnalyzer:
         median_size: Size = statistics.median(sizes)
         max_size: Size = max(sizes)
         h1_threshold: Size = max_size * 0.9
-        some_threshold: Size = median_size * 1.1  # I don't remember what this is. Keeping to see if it's useful.
+        some_threshold: Size = (
+            median_size * 1.1
+        )  # I don't remember what this is. Keeping to see if it's useful.
         general_heading_threshold: Size = mean_size
 
         print(
@@ -162,19 +162,17 @@ class FontSizeAnalyzer:
         x_kde = np.linspace(min(sizes), max(sizes), 1000)
         y_kde = kde(x_kde)
 
-        return RawStats(
-            {
-                "mean": mean_size,
-                "median": median_size,
-                "h1_threshold": h1_threshold,
-                "some_threshold": some_threshold,
-                "general_heading_threshold": general_heading_threshold,
-                "max_size": max_size,
-                "frequency": raw_freq,
-                "kde_x": x_kde,
-                "kde_y": y_kde,
-            }
-        )
+        return RawStats({
+            "mean": mean_size,
+            "median": median_size,
+            "h1_threshold": h1_threshold,
+            "some_threshold": some_threshold,
+            "general_heading_threshold": general_heading_threshold,
+            "max_size": max_size,
+            "frequency": raw_freq,
+            "kde_x": x_kde,
+            "kde_y": y_kde,
+        })
 
     def compute_merged_stats(self, sizes: list[Size]) -> dict[str, dict[Size, int]]:
         """Maps labels to size count."""
@@ -415,9 +413,13 @@ def font_strategy(
         return []
 
     # max_size: Size = max(h.size for h in unique_headings)
-    some_threshold: Size = analysis_data["raw_stats"].get("some_threshold", 0)  # Don't remember what this is for
+    analysis_data["raw_stats"].get(
+        "some_threshold", 0
+    )  # Don't remember what this is for
     h1_threshold: Size = analysis_data["raw_stats"].get("h1_threshold", 0)
-    general_heading_threshold: Size = analysis_data["raw_stats"].get("general_heading_threshold", 0)
+    general_heading_threshold: Size = analysis_data["raw_stats"].get(
+        "general_heading_threshold", 0
+    )
 
     # Define filter thresholds for Phase 1
     PERCENTILE_THRESHOLD = 60.0  # Keep sizes >= 60th percentile
@@ -428,30 +430,37 @@ def font_strategy(
 
     bysize: defaultdict[Size, list[str]] = defaultdict(list)
     bypage: defaultdict[Page, list[str]] = defaultdict(list)
-    
+
     import bisect
-    
+
     for heading in unique_headings:
         size = heading.size
         is_bold = heading.is_bold
-        
+
         # Compute percentile for this heading's font size
         count_smaller = bisect.bisect_left(all_font_sizes, size)
-        percentile = (count_smaller / all_fonts_count) * 100 if all_fonts_count > 0 else 0
-        
+        percentile = (
+            (count_smaller / all_fonts_count) * 100 if all_fonts_count > 0 else 0
+        )
+
         # Apply Phase 1 filters: size threshold, bold requirement, percentile filter, and frequency filter
-        if (size < general_heading_threshold or not is_bold or
-            percentile < PERCENTILE_THRESHOLD or
-            font_freq.get(size, 0) >= FREQ_THRESHOLD):
+        if (
+            size < general_heading_threshold
+            or not is_bold
+            or percentile < PERCENTILE_THRESHOLD
+            or font_freq.get(size, 0) >= FREQ_THRESHOLD
+        ):
             continue
-            
+
         page = heading.page
         text = heading.text
         if size >= h1_threshold:
             level = 1
         else:  # Need granularity here
-            level = '?'
-        bysize[size].append(f"{text[:20]!r:<23} │ {level=} │ {is_bold=:<1} │ p.{page:>2}")
+            level = "?"
+        bysize[size].append(
+            f"{text[:20]!r:<23} │ {level=} │ {is_bold=:<1} │ p.{page:>2}"
+        )
         bypage[page].append(
             f"{text[:20]!r:<23} │ {level=} │ {is_bold=:<1} │ sz {size:>3.2f}"
         )
