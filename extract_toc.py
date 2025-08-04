@@ -62,10 +62,10 @@ AnalysisData = TypedDict(
     },
 )
 
+Strategy = Callable[[RawData, AnalysisData], list[tuple[HeadingLevel, Text, Page]]]
 
-def strategy(
-    func: Callable[[RawData, AnalysisData], list[tuple[HeadingLevel, Text, Page]]],
-) -> Callable[[RawData, AnalysisData], list[tuple[HeadingLevel, Text, Page]]]:
+
+def strategy(func: Strategy) -> Strategy:
     """Mostly a label to help orient around the script. Does type checking as a bonus."""
 
     @functools.wraps(func)
@@ -417,9 +417,7 @@ def generate_visualizations(
 def infer_toc(
     raw_data: RawData,
     analysis_data: AnalysisData,
-    strategies: list[
-        Callable[[RawData, AnalysisData], list[tuple[HeadingLevel, Text, Page]]]
-    ] = None,
+    strategies: list[Strategy] = None,
 ) -> list[tuple[HeadingLevel, Text, Page]]:
     if not strategies:
         strategies = [embedded_strategy, font_strategy]  # Default chain
@@ -432,6 +430,8 @@ def infer_toc(
 
 
 # Strategy helpers
+
+
 @strategy
 def embedded_strategy(
     raw_data: RawData, _: AnalysisData
