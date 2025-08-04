@@ -132,17 +132,23 @@ class FontStatisticalAnalyzer:
         else:
             self.deltas = deltas
 
-    def analyze(self, sizes: list[Size]) -> AnalysisData:
+    def analyze(self, sizes: list[Size], visualize: bool = False) -> AnalysisData:
         self.raw_metrics = self._compute_raw_metrics(sizes)
         self.thresholds = self._derive_thresholds()
         merged_stats: dict[str, dict[Size, int]] = self._compute_merged_stats(sizes)
+        if visualize:
+            self.kde_data = self.compute_viz_data(sizes)
+        else:
+            self.kde_data = ()
         return AnalysisData(
             raw_stats=RawStats({
                 **self.raw_metrics,
                 **self.thresholds,
+                "sorted_sizes": self.raw_metrics["sorted_sizes"],
+                "all_fonts_count": self.raw_metrics["all_fonts_count"],
             }),
             merged_stats=merged_stats,
-            kde_data=(),  # Computed separately on-demand
+            kde_data=self.kde_data,
         )
 
     def _compute_raw_metrics(self, sizes: list[Size]) -> dict:
@@ -239,7 +245,7 @@ class FontStatisticalAnalyzer:
 
             page = heading.page
             text = heading.text
-            level = 1 if size >= h1_threshold else HeadingLevel(2)  # Placeholder updated to 2 for simplicity; refine as needed
+            level = 1 if size >= h1_threshold else HeadingLevel(2)  # Assuming H2 for non-H1 headings; refine for more levels if needed
 
             inferred_toc.append((HeadingLevel(level), text, page))
 
@@ -281,187 +287,179 @@ class FontStatisticalAnalyzer:
         merged[group_key] = group_count
         return merged
 
+    def font_strategy(self, raw_data: RawData) -> list[tuple[HeadingLevel, Text, Page]]:
+        potential_headings: list[Heading] = raw_data.get("potential_headings", [])
+        if not potential_headings or not raw_data.get("all_font_sizes"):
+            return []
 
-# Domain: Visualization Generation
-def generate_visualizations(
-    analysis_data: AnalysisData, all_font_sizes: list[Size], output_dir: str = "."
-):
-    if not all_font_sizes:
-        return []
+        return self.infer_headings(potential_headings)
 
-    data: AnalysisData = analysis_data
-    raw_stats: RawStats = data["raw_stats"]
+    def generate_visualizations(self, all_font_sizes: list[Size], output_dir: str = "."):
+        if not all_font_sizes:
+            return []
 
-    # Helper: Create and persist raw histogram with KDE
-    def _create_and_save_raw_hist() -> str:
-        import numpy as np
-        import plotly.graph_objects as go
+        raw_stats: RawStats = RawStats(self.raw_metrics)
 
-        sizes_array = np.array(all_font_sizes)
-        hist, bin_edges = np.histogram(sizes_array, bins=100)
-        bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
-        customdata = list(zip(bin_edges[:-1], bin_edges[1:]))
-        bin_width = bin_edges[1] - bin_edges[0] if len(bin_edges) > 1 else 1
+        # Helper: Create and persist raw histogram with KDE
+        def _create_and_save_raw_hist() -> str:
+            import numpy as np
+            import plotly.graph_objects as go
 
-        fig = go.Figure()
-        fig.add_trace(
-            go.Bar(
-                x=bin_centers,
-                y=hist,
-                width=bin_width,
-                marker=dict(
-                    color="rgba(0, 123, 255, 0.3)",
-                    line=dict(color="rgba(0, 123, 255, 0.5)", width=1),
-                ),
-                name="Histogram",
-                customdata=customdata,
-                hovertemplate="Bin: %{customdata[0]:.3f} - %{customdata[1]:.3f}<br>Frequency: %{y}<extra></extra>",
+            sizes_array = np.array(all_font_sizes)
+            hist, bin_edges = np.histogram(sizes_array, bins=100)
+            bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+            customdata = list(zip(bin_edges[:-1], bin_edges[1:]))
+            bin_width = bin_edges[1] - bin_edges[0] if len(bin_edges) > 1 else 1
+
+            fig = go.Figure()
+            fig.add_trace(
+                go.Bar(
+                    x=bin_centers,
+                    y=hist,
+                    width=bin_width,
+                    marker=dict(
+                        color="rgba(0, 123, 255, 0.3)",
+                        line=dict(color="rgba(0, 123, 255, 0.5)", width=1),
+                    ),
+                    name="Histogram",
+                    customdata=customdata,
+                    hovertemplate="Bin: %{customdata[0]:.3f} - %{customdata[1]:.3f}<br>Frequency: %{y}<extra></extra>",
+                )
             )
-        )
-        fig.add_trace(
-            go.Scatter(
-                x=data["kde_data"][0],
-                y=data["kde_data"][1] * len(all_font_sizes) * bin_width,
-                mode="lines",
-                line=dict(color="green", width=2),
-                name="KDE",
-                hovertemplate="KDE 0.1: %{y:.1f}<extra></extra>",
-            )
-        )
-
-        # Add vlines for mean, median, h1_threshold
-        fig.add_vline(
-            x=raw_stats["mean"],
-            line=dict(color="rgba(0,128,0,0.25)", width=2, dash="dash"),
-            annotation_text="Mean",
-            annotation_position="top left",
-        )
-        fig.add_vline(
-            x=raw_stats["median"],
-            line=dict(color="rgba(255,165,0,0.25)", width=2, dash="dash"),
-            annotation_text="Median",
-            annotation_position="top center",
-        )
-        fig.add_vline(
-            x=raw_stats["h1_threshold"],
-            line=dict(color="rgba(128,0,128,0.25)", width=2, dash="dash"),
-            annotation_text="Threshold",
-            annotation_position="top right",
-        )
-
-        # Add annotations for top frequencies
-        sorted_freq = sorted(
-            raw_stats["frequency"].items(), key=lambda x: x[1], reverse=True
-        )[:5]
-        for i, (size, count) in enumerate(sorted_freq):
-            fig.add_annotation(
-                x=size,
-                y=count,
-                text=f"Top {i + 1}: {size:.2f} ({count})",
-                showarrow=True,
-                arrowhead=1,
-                yshift=10,
-                font=dict(size=8),
+            fig.add_trace(
+                go.Scatter(
+                    x=self.kde_data[0],
+                    y=self.kde_data[1] * len(all_font_sizes) * bin_width,
+                    mode="lines",
+                    line=dict(color="green", width=2),
+                    name="KDE",
+                    hovertemplate="KDE 0.1: %{y:.1f}<extra></extra>",
+                )
             )
 
-        fig.update_layout(
-            title="Interactive Raw Font Size Distribution with KDE",
-            xaxis_title="Font Size",
-            yaxis_title="Frequency",
-            barmode="overlay",
-            hovermode="x unified",
-            legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01),
-        )
-        filename = os.path.join(output_dir, "raw_font_size_dist.html")
-        fig.write_html(filename)
-        print("Saved interactive raw distribution to 'raw_font_size_dist.html'")
-        return filename
-
-    # Helper: Create and persist sorted bar chart
-    def _create_and_save_sorted_bar() -> str:
-        import plotly.graph_objects as go
-
-        unique_sizes: list[Size] = sorted(raw_stats["frequency"].keys())
-        counts: list[int] = [raw_stats["frequency"][size] for size in unique_sizes]
-
-        fig = go.Figure(
-            go.Scatter(
-                x=unique_sizes,
-                y=counts,
-                mode="markers+lines",
-                marker=dict(color=counts, colorscale="viridis", size=10),
-                line=dict(color="gray"),
+            # Add vlines for mean, median, h1_threshold
+            fig.add_vline(
+                x=raw_stats["mean"],
+                line=dict(color="rgba(0,128,0,0.25)", width=2, dash="dash"),
+                annotation_text="Mean",
+                annotation_position="top left",
             )
-        )
-        fig.update_layout(
-            title="Interactive Frequency of Unique Font Sizes (Sorted)",
-            xaxis_title="Font Size",
-            yaxis_title="Frequency",
-            yaxis_type="log",
-        )
-        filename = os.path.join(output_dir, "unique_font_size_freq.html")
-        fig.write_html(filename)
-        print(
-            "Saved interactive unique font size frequency to 'unique_font_size_freq.html'"
-        )
-        return filename
+            fig.add_vline(
+                x=raw_stats["median"],
+                line=dict(color="rgba(255,165,0,0.25)", width=2, dash="dash"),
+                annotation_text="Median",
+                annotation_position="top center",
+            )
+            fig.add_vline(
+                x=raw_stats["h1_threshold"],
+                line=dict(color="rgba(128,0,128,0.25)", width=2, dash="dash"),
+                annotation_text="Threshold",
+                annotation_position="top right",
+            )
 
-    # Helper: Create and persist merged distributions (one per delta)
-    def _create_and_save_merged() -> list[str]:
-        import plotly.graph_objects as go
+            # Add annotations for top frequencies
+            sorted_freq = sorted(
+                raw_stats["frequency"].items(), key=lambda x: x[1], reverse=True
+            )[:5]
+            for i, (size, count) in enumerate(sorted_freq):
+                fig.add_annotation(
+                    x=size,
+                    y=count,
+                    text=f"Top {i + 1}: {size:.2f} ({count})",
+                    showarrow=True,
+                    arrowhead=1,
+                    yshift=10,
+                    font=dict(size=8),
+                )
 
-        merged_files: list[str] = []
-        for label, merged_freq in data["merged_stats"].items():
-            merged_sizes: list[Size] = sorted(merged_freq.keys())
-            merged_counts: list[int] = [merged_freq[size] for size in merged_sizes]
+            fig.update_layout(
+                title="Interactive Raw Font Size Distribution with KDE",
+                xaxis_title="Font Size",
+                yaxis_title="Frequency",
+                barmode="overlay",
+                hovermode="x unified",
+                legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01),
+            )
+            filename = os.path.join(output_dir, "raw_font_size_dist.html")
+            fig.write_html(filename)
+            print("Saved interactive raw distribution to 'raw_font_size_dist.html'")
+            return filename
+
+        # Helper: Create and persist sorted bar chart
+        def _create_and_save_sorted_bar() -> str:
+            import plotly.graph_objects as go
+
+            unique_sizes: list[Size] = sorted(raw_stats["frequency"].keys())
+            counts: list[int] = [raw_stats["frequency"][size] for size in unique_sizes]
 
             fig = go.Figure(
                 go.Scatter(
-                    x=merged_sizes,
-                    y=merged_counts,
+                    x=unique_sizes,
+                    y=counts,
                     mode="markers+lines",
-                    marker=dict(color=merged_counts, colorscale="rdbu", size=12),
-                    line=dict(color="lightgray"),
+                    marker=dict(color=counts, colorscale="viridis", size=10),
+                    line=dict(color="gray"),
                 )
             )
             fig.update_layout(
-                title=f"Interactive {label.capitalize()} Merged Font Size Distribution",
-                xaxis_title="Merged Font Size",
+                title="Interactive Frequency of Unique Font Sizes (Sorted)",
+                xaxis_title="Font Size",
                 yaxis_title="Frequency",
-                yaxis_type="log" if label == "very light" else "linear",
+                yaxis_type="log",
             )
-
-            filename = os.path.join(
-                output_dir, f"{label.replace(' ', '_')}_merged_font_size_dist.html"
-            )
+            filename = os.path.join(output_dir, "unique_font_size_freq.html")
             fig.write_html(filename)
-            print(f"Saved interactive {label} merged distribution to '{filename}'")
-            merged_files.append(filename)
-        return merged_files
+            print(
+                "Saved interactive unique font size frequency to 'unique_font_size_freq.html'"
+            )
+            return filename
 
-    # Main visualization logic
-    saved_files = []
-    saved_files.append(_create_and_save_raw_hist())
-    saved_files.append(_create_and_save_sorted_bar())
-    saved_files.extend(_create_and_save_merged())
+        # Helper: Create and persist merged distributions (one per delta)
+        def _create_and_save_merged() -> list[str]:
+            import plotly.graph_objects as go
 
-    return saved_files
+            merged_files: list[str] = []
+            for label, merged_freq in raw_stats.items(): # Changed from data["merged_stats"] to raw_stats
+                merged_sizes: list[Size] = sorted(merged_freq.keys())
+                merged_counts: list[int] = [merged_freq[size] for size in merged_sizes]
 
+                fig = go.Figure(
+                    go.Scatter(
+                        x=merged_sizes,
+                        y=merged_counts,
+                        mode="markers+lines",
+                        marker=dict(color=merged_counts, colorscale="rdbu", size=12),
+                        line=dict(color="lightgray"),
+                    )
+                )
+                fig.update_layout(
+                    title=f"Interactive {label.capitalize()} Merged Font Size Distribution",
+                    xaxis_title="Merged Font Size",
+                    yaxis_title="Frequency",
+                    yaxis_type="log" if label == "very light" else "linear",
+                )
 
-# Domain: TOC Inference
-def infer_toc(
-    raw_data: RawData,
-    analysis_data: AnalysisData,
-    strategies: list[Strategy] = None,
-) -> list[tuple[HeadingLevel, Text, Page]]:
-    if not strategies:
-        strategies = [embedded_strategy, font_strategy]  # Default chain
+                filename = os.path.join(
+                    output_dir, f"{label.replace(' ', '_')}_merged_font_size_dist.html"
+                )
+                fig.write_html(filename)
+                print(f"Saved interactive {label} merged distribution to '{filename}'")
+                merged_files.append(filename)
+            return merged_files
 
-    for strategy in strategies:
-        toc = strategy(raw_data, analysis_data)
-        if toc:  # Non-empty TOC
-            return toc
-    return []  # No TOC inferred
+        # Main visualization logic
+        saved_files = []
+        saved_files.append(_create_and_save_raw_hist())
+        saved_files.append(_create_and_save_sorted_bar())
+        saved_files.extend(_create_and_save_merged())
+        return saved_files
+
+    def infer_toc(self, raw_data: RawData, use_embedded: bool = True) -> list[tuple[HeadingLevel, Text, Page]]:
+        if use_embedded:
+            embedded = embedded_strategy(raw_data, {})
+            if embedded:
+                return embedded
+        return self.font_strategy(raw_data)
 
 
 # Strategy helpers
@@ -478,41 +476,19 @@ def embedded_strategy(
     return raw_data.get("embedded_toc", [])
 
 
-@strategy
-def font_strategy(
-    raw_data: RawData, analysis_data: AnalysisData
-) -> list[tuple[HeadingLevel, Text, Page]]:
-    potential_headings: list[Heading] = raw_data.get("potential_headings", [])
-    if not potential_headings or not raw_data.get("all_font_sizes"):
-        return []
-
-    # Note: In full integration, pass the analyzer from get_toc; for this edit, assume it's available via analysis_data or recreate
-    # To make it work without further changes, recreate minimally here
-    analyzer = FontStatisticalAnalyzer()
-    analyzer.analyze(raw_data["all_font_sizes"])
-
-    return analyzer.infer_headings(potential_headings)
-
-
 # Orchestrator
 def get_toc(
     pdf_path: str, *, visualize: bool = False
 ) -> list[tuple[HeadingLevel, Text, Page]]:
-    """
-    Main entry point.
-    """
     raw_data: RawData = parse_pdf_document(pdf_path)
 
-    if raw_data["embedded_toc"] and not visualize:
-        return raw_data["embedded_toc"]
-
     analyzer = FontStatisticalAnalyzer()
-    analysis_data = analyzer.analyze(raw_data["all_font_sizes"])
+    analysis_data = analyzer.analyze(raw_data["all_font_sizes"], visualize=visualize)
 
     if visualize:
-        generate_visualizations(analysis_data, raw_data["all_font_sizes"])
+        analyzer.generate_visualizations(raw_data["all_font_sizes"])
 
-    return infer_toc(raw_data, analysis_data)
+    return analyzer.infer_toc(raw_data, use_embedded=not visualize)
 
 
 # Main
