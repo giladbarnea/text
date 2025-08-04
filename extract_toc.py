@@ -131,6 +131,7 @@ class FontStatisticalAnalyzer:
     - Applied: Filters and infers headings using raw/derived data.
     - Viz: Generates optional visualizations from computed data.
     """
+
     deltas: dict[str, Size]
 
     def __init__(self, deltas: dict[str, Size] = None) -> None:
@@ -148,12 +149,14 @@ class FontStatisticalAnalyzer:
         else:
             self.kde_data = ()
         return AnalysisData(
-            raw_stats=RawStats({
-                **self.raw_metrics,
-                **self.thresholds,
-                "sorted_sizes": self.raw_metrics["sorted_sizes"],
-                "all_fonts_count": self.raw_metrics["all_fonts_count"],
-            }),
+            raw_stats=RawStats(
+                {
+                    **self.raw_metrics,
+                    **self.thresholds,
+                    "sorted_sizes": self.raw_metrics["sorted_sizes"],
+                    "all_fonts_count": self.raw_metrics["all_fonts_count"],
+                }
+            ),
             merged_stats=merged_stats,
             kde_data=self.kde_data,
         )
@@ -197,6 +200,7 @@ class FontStatisticalAnalyzer:
     def _compute_viz_data(self, sizes: list[Size]) -> tuple:
         import numpy as np
         from scipy.stats import gaussian_kde
+
         sizes_array = np.array(sizes)
         kde = gaussian_kde(sizes_array, bw_method=0.1)
         x_kde = np.linspace(min(sizes), max(sizes), 1000)
@@ -205,18 +209,22 @@ class FontStatisticalAnalyzer:
 
     def _get_percentile(self, size: Size) -> float:
         import bisect
+
         sorted_sizes = self.raw_metrics["sorted_sizes"]
         all_fonts_count = self.raw_metrics["all_fonts_count"]
         count_smaller = bisect.bisect_left(sorted_sizes, size)
         return (count_smaller / all_fonts_count) * 100 if all_fonts_count > 0 else 0
 
-    def _infer_headings(self, spans: list[Span]) -> list[tuple[HeadingLevel, Text, Page]]:
+    def _infer_headings(
+        self, spans: list[Span]
+    ) -> list[tuple[HeadingLevel, Text, Page]]:
         if not spans:
             return []
 
         # Light filtering: bold text under 10 words
         potential_headings = [
-            span for span in spans
+            span
+            for span in spans
             if len(span.text) > 1 and len(span.text.split()) < 10 and span.is_bold
         ]
 
@@ -226,11 +234,16 @@ class FontStatisticalAnalyzer:
         # Uniqueness counting
         heading_counts: dict[tuple[Text, Size, IsBold], int] = {}
         for heading in potential_headings:
-            key: tuple[Text, Size, IsBold] = (heading.text, heading.size, heading.is_bold)
+            key: tuple[Text, Size, IsBold] = (
+                heading.text,
+                heading.size,
+                heading.is_bold,
+            )
             heading_counts[key] = heading_counts.get(key, 0) + 1
 
         unique_headings: list[Span] = [
-            heading for heading in potential_headings
+            heading
+            for heading in potential_headings
             if heading_counts[(heading.text, heading.size, heading.is_bold)] == 1
         ]
 
@@ -261,7 +274,9 @@ class FontStatisticalAnalyzer:
 
             page = heading.page
             text = heading.text
-            level = 1 if size >= h1_threshold else HeadingLevel(2)  # Assuming H2 for non-H1 headings; refine for more levels if needed
+            level = (
+                1 if size >= h1_threshold else HeadingLevel(2)
+            )  # Assuming H2 for non-H1 headings; refine for more levels if needed
 
             inferred_toc.append((HeadingLevel(level), text, page))
 
@@ -310,7 +325,9 @@ class FontStatisticalAnalyzer:
 
         return self._infer_headings(spans)
 
-    def generate_visualizations(self, all_font_sizes: list[Size], output_dir: str = "."):
+    def generate_visualizations(
+        self, all_font_sizes: list[Size], output_dir: str = "."
+    ):
         if not all_font_sizes:
             return []
 
@@ -435,7 +452,10 @@ class FontStatisticalAnalyzer:
             import plotly.graph_objects as go
 
             merged_files: list[str] = []
-            for label, merged_freq in raw_stats.items(): # Changed from data["merged_stats"] to raw_stats
+            for (
+                label,
+                merged_freq,
+            ) in raw_stats.items():  # Changed from data["merged_stats"] to raw_stats
                 merged_sizes: list[Size] = sorted(merged_freq.keys())
                 merged_counts: list[int] = [merged_freq[size] for size in merged_sizes]
 
@@ -470,7 +490,9 @@ class FontStatisticalAnalyzer:
         saved_files.extend(_create_and_save_merged())
         return saved_files
 
-    def infer_toc(self, raw_data: RawData, use_embedded: bool = True) -> list[tuple[HeadingLevel, Text, Page]]:
+    def infer_toc(
+        self, raw_data: RawData, use_embedded: bool = True
+    ) -> list[tuple[HeadingLevel, Text, Page]]:
         if use_embedded:
             embedded = embedded_strategy(raw_data, {})
             if embedded:
@@ -486,8 +508,7 @@ def embedded_strategy(
     raw_data: RawData, _: AnalysisData
 ) -> list[tuple[HeadingLevel, Text, Page]]:
     """
-    This is the default strategy.
-    It's used if no other strategy is provided.
+    The default strategy: use the embedded TOC if it exists.
     """
     return raw_data.get("embedded_toc", [])
 
@@ -497,6 +518,8 @@ def get_toc(
     pdf_path: str, *, visualize: bool = False
 ) -> list[tuple[HeadingLevel, Text, Page]]:
     raw_data: RawData = parse_pdf_document(pdf_path)
+    if embedded_toc := raw_data.get("embedded_toc"):
+        return embedded_toc
 
     analyzer = FontStatisticalAnalyzer()
     analyzer.analyze(raw_data["all_font_sizes"], visualize=visualize)
