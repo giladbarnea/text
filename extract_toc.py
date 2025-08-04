@@ -26,7 +26,14 @@ Page = NewType("Page", int)
 HeadingLevel = NewType("HeadingLevel", int)
 
 Span = NamedTuple(
-    "Span", [("page", Page), ("size", Size), ("text", Text), ("is_bold", IsBold)]
+    "Span",
+    [
+        ("page", Page),
+        ("size", Size),
+        ("text", Text),
+        ("is_bold", IsBold),
+        ("y_pos", float),
+    ],
 )
 RawData = TypedDict(
     "RawData",
@@ -103,12 +110,15 @@ def parse_pdf_document(pdf_path: str) -> RawData:
                             size: Size = span["size"]
                             all_font_sizes.append(size)
                             is_bold: IsBold = (span["flags"] & 16) != 0
+                            # Deterministic y-coordinate (top-down; lower values = higher on page)
+                            y_pos = span["origin"][1]
                             spans.append(
                                 Span(
                                     page=Page(page_num + 1),
                                     size=Size(size),
                                     text=Text(text),
                                     is_bold=IsBold(is_bold),
+                                    y_pos=y_pos,
                                 )
                             )
 
@@ -249,6 +259,14 @@ class FontStatisticalAnalyzer:
 
         if not unique_headings:
             return []
+        
+        # Filter if >2 in same line/group (tune to 3 if too aggressive)
+        MAX_HEADINGS_IN_SAME_GROUP = 2
+        Y_ROUNDING = 5.0  # Bucket size for y_pos noise (adjust based on PDF scaling)
+        groups = defaultdict(list)
+        for h in unique_headings:
+            rounded_y = round(h.y_pos / Y_ROUNDING) * Y_ROUNDING
+            groups[(h.page, rounded_y)].append(h)
 
         # Access raw metrics and thresholds
         general_heading_threshold = self.raw_metrics["general_heading_threshold"]
@@ -264,11 +282,15 @@ class FontStatisticalAnalyzer:
             is_bold = heading.is_bold
             percentile = self._get_percentile(size)
 
+            rounded_y = round(heading.y_pos / Y_ROUNDING) * Y_ROUNDING
+            group = groups[(heading.page, rounded_y)]
+
             if (
                 size < general_heading_threshold
                 or not is_bold
                 or percentile < size_percentile_min_threshold
                 or font_freq.get(size, 0) >= freq_max_threshold
+                or len(group) > MAX_HEADINGS_IN_SAME_GROUP
             ):
                 continue
 
