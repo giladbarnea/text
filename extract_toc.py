@@ -5,6 +5,7 @@
 import argparse
 import os
 import statistics
+import functools
 
 # Analysis: from collections import Counter; import statistics; import numpy as np; from scipy.stats import gaussian_kde
 from collections import Counter, defaultdict
@@ -62,29 +63,28 @@ AnalysisData = TypedDict(
 )
 
 
-# Utility function (used in Analysis)
-def merge_sizes(sizes: list[Size], delta: float) -> dict[Size, int]:
-    if not sizes:
-        return {}
-    sorted_unique: list[Size] = sorted(set(sizes))
-    merged: dict[Size, int] = {}
-    current_group: list[Size] = [sorted_unique[0]]
-    for i in range(1, len(sorted_unique)):
-        if sorted_unique[i] - current_group[-1] <= delta:
-            current_group.append(sorted_unique[i])
-        else:
-            group_key: Size = statistics.mean(current_group)
-            group_count: int = sum(Counter(sizes)[s] for s in current_group)
-            merged[group_key] = group_count
-            current_group = [sorted_unique[i]]
-    group_key: Size = statistics.mean(current_group)
-    group_count: int = sum(Counter(sizes)[s] for s in current_group)
-    merged[group_key] = group_count
-    return merged
+def strategy(
+    func: Callable[[RawData, AnalysisData], list[tuple[HeadingLevel, Text, Page]]],
+) -> Callable[[RawData, AnalysisData], list[tuple[HeadingLevel, Text, Page]]]:
+    """Mostly a label to help orient around the script. Does type checking as a bonus."""
+
+    @functools.wraps(func)
+    def wrapper(
+        raw_data: RawData, analysis_data: AnalysisData
+    ) -> list[tuple[HeadingLevel, Text, Page]]:
+        return func(RawData(raw_data), AnalysisData(analysis_data))
+
+    return wrapper
 
 
 # Domain: Document Parsing
 def parse_pdf_document(pdf_path: str) -> RawData:
+    """
+    Preliminary parsing of the document.
+    `embedded_toc` is not empty only if the document has an embedded TOC. In that case, `potential_headings` shouldn't be used.
+    `potential_headings` is a light first-pass on the document to collect heading candidates: bold, non-empty spans under 10 words. No serious statistical analysis is done here (only later).
+    `all_font_sizes` is a list of sizes of all text spans in the document.
+    """
     doc = fitz.open(pdf_path)
     embedded_toc: list[tuple[HeadingLevel, Text, Page]] = doc.get_toc()
 
@@ -123,7 +123,7 @@ def parse_pdf_document(pdf_path: str) -> RawData:
 
 
 # Domain: Statistical Analysis (Font-specific)
-class FontSizeAnalyzer:
+class FontStatisticalAnalyzer:
     deltas: dict[str, Size]
 
     def __init__(self, deltas: dict[str, Size] = None) -> None:
@@ -132,8 +132,18 @@ class FontSizeAnalyzer:
         else:
             self.deltas = deltas
 
-    def compute_raw_stats(self, sizes: list[Size]) -> RawStats:
-        """This is where we compute the stats that will be used for filtering.
+    def analyze(self, sizes: list[Size]) -> AnalysisData:
+        raw_stats: RawStats = self._compute_raw_stats(sizes)
+        merged_stats: dict[str, dict[Size, int]] = self._compute_merged_stats(sizes)
+        return AnalysisData(
+            raw_stats=raw_stats,
+            merged_stats=merged_stats,
+            kde_data=(raw_stats.get("kde_x"), raw_stats.get("kde_y")),  # For viz
+        )
+
+    def _compute_raw_stats(self, sizes: list[Size]) -> RawStats:
+        """
+        This is where we compute the stats that will be used for filtering.
         "Heavy" computation lifting should be done here.
         """
         import numpy as np
@@ -169,15 +179,21 @@ class FontSizeAnalyzer:
 
         # Dynamic threshold computation
         freq_values = list(raw_freq.values())
+
+        # median_freq is unused? I don't remember if we intentionally chose mean over median or is this a mistake?
         median_freq = statistics.median(freq_values) if freq_values else 0
-        
+
         # Set percentile min to ~35% (even less aggressive than 40% to capture missing H2/H4 headings)
         size_percentile_min_threshold = 35.0
-        
+
         # Set freq max threshold to capture H2/H4 headings that may have high frequency due to similar body text sizes
         # Use 95th percentile of frequencies or minimum of 1400 to allow high-frequency headings
         sorted_freq_values = sorted(freq_values)
-        freq_95th_percentile = sorted_freq_values[int(0.95 * len(sorted_freq_values))] if sorted_freq_values else 0
+        freq_95th_percentile = (
+            sorted_freq_values[int(0.95 * len(sorted_freq_values))]
+            if sorted_freq_values
+            else 0
+        )
         freq_max_threshold = max(1400, freq_95th_percentile)
 
         return RawStats(
@@ -196,25 +212,39 @@ class FontSizeAnalyzer:
             }
         )
 
-    def compute_merged_stats(self, sizes: list[Size]) -> dict[str, dict[Size, int]]:
+    def _compute_merged_stats(self, sizes: list[Size]) -> dict[str, dict[Size, int]]:
         """
         Maps labels to size count.
         Only used for visualization.
         """
         merged_stats: dict[str, dict[Size, int]] = {}
         for label, delta in self.deltas.items():
-            merged_freq: dict[Size, int] = merge_sizes(sizes, delta)
+            merged_freq: dict[Size, int] = self._merge_sizes(sizes, delta)
             merged_stats[label] = merged_freq
         return merged_stats
 
-    def analyze(self, sizes: list[Size]) -> AnalysisData:
-        raw_stats: RawStats = self.compute_raw_stats(sizes)
-        merged_stats: dict[str, dict[Size, int]] = self.compute_merged_stats(sizes)
-        return AnalysisData(
-            raw_stats=raw_stats,
-            merged_stats=merged_stats,
-            kde_data=(raw_stats.get("kde_x"), raw_stats.get("kde_y")),  # For viz
-        )
+    @staticmethod
+    def _merge_sizes(sizes: list[Size], delta: float) -> dict[Size, int]:
+        """
+        Merges sizes that are close to each other to (hopefully) reduce noise.
+        """
+        if not sizes:
+            return {}
+        sorted_unique: list[Size] = sorted(set(sizes))
+        merged: dict[Size, int] = {}
+        current_group: list[Size] = [sorted_unique[0]]
+        for i in range(1, len(sorted_unique)):
+            if sorted_unique[i] - current_group[-1] <= delta:
+                current_group.append(sorted_unique[i])
+            else:
+                group_key: Size = statistics.mean(current_group)
+                group_count: int = sum(Counter(sizes)[s] for s in current_group)
+                merged[group_key] = group_count
+                current_group = [sorted_unique[i]]
+        group_key: Size = statistics.mean(current_group)
+        group_count: int = sum(Counter(sizes)[s] for s in current_group)
+        merged[group_key] = group_count
+        return merged
 
 
 # Domain: Visualization Generation
@@ -402,6 +432,7 @@ def infer_toc(
 
 
 # Strategy helpers
+@strategy
 def embedded_strategy(
     raw_data: RawData, _: AnalysisData
 ) -> list[tuple[HeadingLevel, Text, Page]]:
@@ -412,11 +443,13 @@ def embedded_strategy(
     return raw_data.get("embedded_toc", [])
 
 
+@strategy
 def font_strategy(
     raw_data: RawData, analysis_data: AnalysisData
 ) -> list[tuple[HeadingLevel, Text, Page]]:
     """
-    Infer TOC from font sizes. Relies on the analysis data from `compute_raw_stats()`.
+    Infer TOC from font sizes. Relies on the analysis data from `_compute_raw_stats()`.
+    Smell: all analysis logic should be under `FontStatisticalAnalyzer`'s responsibility.
     """
     potential_headings: list[Heading] = raw_data.get("potential_headings", [])
     if not potential_headings or not raw_data.get(
@@ -455,7 +488,9 @@ def font_strategy(
 
     # --- Define filter thresholds for Phase 1
     # Extract dynamic thresholds from analysis data
-    size_percentile_min_threshold = analysis_data["raw_stats"].get("size_percentile_min_threshold", 35.0)
+    size_percentile_min_threshold = analysis_data["raw_stats"].get(
+        "size_percentile_min_threshold", 35.0
+    )
     freq_max_threshold = analysis_data["raw_stats"].get("freq_max_threshold", 1400)
 
     # Assign levels (font-specific heuristics)
@@ -492,12 +527,8 @@ def font_strategy(
             level = 1
         else:  # Need granularity here
             level = "?"
-        bysize[size].append(
-            f"{text[:20]!r:<23} │ {level=} │ p.{page:>2}"
-        )
-        bypage[page].append(
-            f"{text[:20]!r:<23} │ {level=} │ sz {size:>3.2f}"
-        )
+        bysize[size].append(f"{text[:20]!r:<23} │ {level=} │ p.{page:>2}")
+        bypage[page].append(f"{text[:20]!r:<23} │ {level=} │ sz {size:>3.2f}")
         inferred_toc.append((HeadingLevel(level), text, page))
 
     print("\n\n==== Unique headings by SIZE ====")
@@ -524,14 +555,17 @@ def font_strategy(
 
 # Orchestrator
 def get_toc(
-    pdf_path: str, visualize: bool = False
+    pdf_path: str, *, visualize: bool = False
 ) -> list[tuple[HeadingLevel, Text, Page]]:
+    """
+    Main entry point.
+    """
     raw_data: RawData = parse_pdf_document(pdf_path)
 
     if raw_data["embedded_toc"] and not visualize:
         return raw_data["embedded_toc"]
 
-    analyzer = FontSizeAnalyzer()
+    analyzer = FontStatisticalAnalyzer()
     analysis_data = analyzer.analyze(raw_data["all_font_sizes"])
 
     if visualize:
@@ -541,7 +575,7 @@ def get_toc(
 
 
 # Main
-def main() -> None:
+def main_cli() -> None:
     parser = argparse.ArgumentParser(description="Extract or infer TOC from PDF")
     parser.add_argument("pdf_path", help="Path to the PDF file")
     parser.add_argument(
@@ -569,9 +603,9 @@ def main() -> None:
                 indent = "#" * level + " "
                 indent = "\n" + indent if level == 1 else indent
             else:
-                indent = '##* '
+                indent = "##* "
             print(f"{indent}{title} (Page {page})")
 
 
 if __name__ == "__main__":
-    main()
+    main_cli()
