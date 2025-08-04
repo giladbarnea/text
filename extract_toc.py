@@ -25,15 +25,15 @@ IsBold = NewType("IsBold", bool)
 Page = NewType("Page", int)
 HeadingLevel = NewType("HeadingLevel", int)
 
-Heading = NamedTuple(
-    "Heading", [("page", Page), ("size", Size), ("text", Text), ("is_bold", IsBold)]
+Span = NamedTuple(
+    "Span", [("page", Page), ("size", Size), ("text", Text), ("is_bold", IsBold)]
 )
 RawData = TypedDict(
     "RawData",
     {
         "embedded_toc": list[tuple[HeadingLevel, Text, Page]],
         "all_font_sizes": list[Size],
-        "potential_headings": list[Heading],
+        "spans": list[Span],
     },
 )
 
@@ -80,16 +80,16 @@ def strategy(func: Strategy) -> Strategy:
 # Domain: Document Parsing
 def parse_pdf_document(pdf_path: str) -> RawData:
     """
-    Preliminary parsing of the document.
-    `embedded_toc` is not empty only if the document has an embedded TOC. In that case, `potential_headings` shouldn't be used.
-    `potential_headings` is a light first-pass on the document to collect heading candidates: bold, non-empty spans under 10 words. No serious statistical analysis is done here (only later).
+    Extracts the document's text spans and font sizes.
+    `embedded_toc` is not empty only if the document has an embedded TOC.
+    `spans` is a list of all text spans in the document.
     `all_font_sizes` is a list of sizes of all text spans in the document.
     """
     doc = fitz.open(pdf_path)
     embedded_toc: list[tuple[HeadingLevel, Text, Page]] = doc.get_toc()
 
     all_font_sizes: list[Size] = []
-    potential_headings: list[Heading] = []
+    spans: list[Span] = []
 
     for page_num in range(doc.page_count):
         page = doc.load_page(page_num)
@@ -103,27 +103,34 @@ def parse_pdf_document(pdf_path: str) -> RawData:
                             size: Size = span["size"]
                             all_font_sizes.append(size)
                             is_bold: IsBold = (span["flags"] & 16) != 0
-                            if len(text) > 1 and len(text.split()) < 10 and is_bold:
-                                # 1st (light) filter: bold sentences under 10 words.
-                                potential_headings.append(
-                                    Heading(
-                                        page=Page(page_num + 1),
-                                        size=Size(size),
-                                        text=Text(text),
-                                        is_bold=IsBold(is_bold),
-                                    )
+                            spans.append(
+                                Span(
+                                    page=Page(page_num),
+                                    size=Size(size),
+                                    text=Text(text),
+                                    is_bold=IsBold(is_bold),
                                 )
+                            )
 
     doc.close()
     return RawData(
         embedded_toc=embedded_toc,
         all_font_sizes=all_font_sizes,
-        potential_headings=potential_headings,
+        spans=spans,
     )
 
 
-# Domain: Statistical Analysis (Font-specific)
+# Domain: Statistical Analysis
 class FontStatisticalAnalyzer:
+    """
+    Analyzes font statistics for TOC inference following a pipeline: raw font metrics computation → derived thresholds → applied heading inference → optional visualization.
+
+    Responsibility boundaries:
+    - Raw: Computes basic metrics (mean, median, frequencies, sorted sizes) from font sizes.
+    - Derived: Calculates dynamic thresholds (e.g., percentiles, frequency caps) from raw metrics.
+    - Applied: Filters and infers headings using raw/derived data.
+    - Viz: Generates optional visualizations from computed data.
+    """
     deltas: dict[str, Size]
 
     def __init__(self, deltas: dict[str, Size] = None) -> None:
@@ -137,7 +144,7 @@ class FontStatisticalAnalyzer:
         self.thresholds = self._derive_thresholds()
         merged_stats: dict[str, dict[Size, int]] = self._compute_merged_stats(sizes)
         if visualize:
-            self.kde_data = self.compute_viz_data(sizes)
+            self.kde_data = self._compute_viz_data(sizes)
         else:
             self.kde_data = ()
         return AnalysisData(
@@ -187,7 +194,7 @@ class FontStatisticalAnalyzer:
             "freq_max_threshold": freq_max_threshold,
         }
 
-    def compute_viz_data(self, sizes: list[Size]) -> tuple:
+    def _compute_viz_data(self, sizes: list[Size]) -> tuple:
         import numpy as np
         from scipy.stats import gaussian_kde
         sizes_array = np.array(sizes)
@@ -196,14 +203,23 @@ class FontStatisticalAnalyzer:
         y_kde = kde(x_kde)
         return (x_kde, y_kde)
 
-    def get_percentile(self, size: Size) -> float:
+    def _get_percentile(self, size: Size) -> float:
         import bisect
         sorted_sizes = self.raw_metrics["sorted_sizes"]
         all_fonts_count = self.raw_metrics["all_fonts_count"]
         count_smaller = bisect.bisect_left(sorted_sizes, size)
         return (count_smaller / all_fonts_count) * 100 if all_fonts_count > 0 else 0
 
-    def infer_headings(self, potential_headings: list[Heading]) -> list[tuple[HeadingLevel, Text, Page]]:
+    def _infer_headings(self, spans: list[Span]) -> list[tuple[HeadingLevel, Text, Page]]:
+        if not spans:
+            return []
+
+        # Light filtering: bold text under 10 words
+        potential_headings = [
+            span for span in spans
+            if len(span.text) > 1 and len(span.text.split()) < 10 and span.is_bold
+        ]
+
         if not potential_headings:
             return []
 
@@ -213,7 +229,7 @@ class FontStatisticalAnalyzer:
             key: tuple[Text, Size, IsBold] = (heading.text, heading.size, heading.is_bold)
             heading_counts[key] = heading_counts.get(key, 0) + 1
 
-        unique_headings: list[Heading] = [
+        unique_headings: list[Span] = [
             heading for heading in potential_headings
             if heading_counts[(heading.text, heading.size, heading.is_bold)] == 1
         ]
@@ -233,7 +249,7 @@ class FontStatisticalAnalyzer:
         for heading in unique_headings:
             size = heading.size
             is_bold = heading.is_bold
-            percentile = self.get_percentile(size)
+            percentile = self._get_percentile(size)
 
             if (
                 size < general_heading_threshold
@@ -288,11 +304,11 @@ class FontStatisticalAnalyzer:
         return merged
 
     def font_strategy(self, raw_data: RawData) -> list[tuple[HeadingLevel, Text, Page]]:
-        potential_headings: list[Heading] = raw_data.get("potential_headings", [])
-        if not potential_headings or not raw_data.get("all_font_sizes"):
+        spans: list[Span] = raw_data.get("spans", [])
+        if not spans or not raw_data.get("all_font_sizes"):
             return []
 
-        return self.infer_headings(potential_headings)
+        return self._infer_headings(spans)
 
     def generate_visualizations(self, all_font_sizes: list[Size], output_dir: str = "."):
         if not all_font_sizes:
@@ -483,7 +499,7 @@ def get_toc(
     raw_data: RawData = parse_pdf_document(pdf_path)
 
     analyzer = FontStatisticalAnalyzer()
-    analysis_data = analyzer.analyze(raw_data["all_font_sizes"], visualize=visualize)
+    analyzer.analyze(raw_data["all_font_sizes"], visualize=visualize)
 
     if visualize:
         analyzer.generate_visualizations(raw_data["all_font_sizes"])
