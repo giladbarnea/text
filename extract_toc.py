@@ -105,7 +105,7 @@ def parse_pdf_document(pdf_path: str) -> RawData:
                             is_bold: IsBold = (span["flags"] & 16) != 0
                             spans.append(
                                 Span(
-                                    page=Page(page_num),
+                                    page=Page(page_num + 1),
                                     size=Size(size),
                                     text=Text(text),
                                     is_bold=IsBold(is_bold),
