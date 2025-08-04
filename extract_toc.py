@@ -493,10 +493,10 @@ def font_strategy(
         else:  # Need granularity here
             level = "?"
         bysize[size].append(
-            f"{text[:20]!r:<23} │ {level=} │ {is_bold=:<1} │ p.{page:>2}"
+            f"{text[:20]!r:<23} │ {level=} │ p.{page:>2}"
         )
         bypage[page].append(
-            f"{text[:20]!r:<23} │ {level=} │ {is_bold=:<1} │ sz {size:>3.2f}"
+            f"{text[:20]!r:<23} │ {level=} │ sz {size:>3.2f}"
         )
         inferred_toc.append((HeadingLevel(level), text, page))
 
@@ -565,7 +565,12 @@ def main() -> None:
     else:
         print(f"Table of Contents for '{pdf_name}' (inferred if no embedded TOC):")
         for level, title, page in toc:
-            print(f"{'  ' * (len(level))}{title} (Page {page})")
+            if isinstance(level, int):
+                indent = "#" * level + " "
+                indent = "\n" + indent if level == 1 else indent
+            else:
+                indent = '##* '
+            print(f"{indent}{title} (Page {page})")
 
 
 if __name__ == "__main__":
