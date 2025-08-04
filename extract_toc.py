@@ -259,13 +259,17 @@ class FontStatisticalAnalyzer:
 
         if not unique_headings:
             return []
-        
-        # Filter if >2 in same line/group (tune to 3 if too aggressive)
-        MAX_HEADINGS_IN_SAME_GROUP = 2
-        Y_ROUNDING = 5.0  # Bucket size for y_pos noise (adjust based on PDF scaling)
+
+        MAX_HEADINGS_IN_SAME_GROUP = 1
+        GROUP_HEADINGS_WITHIN_Y_DIST = (
+            5.0  # Bucket size for y_pos noise (adjust based on PDF scaling)
+        )
         groups = defaultdict(list)
         for h in unique_headings:
-            rounded_y = round(h.y_pos / Y_ROUNDING) * Y_ROUNDING
+            rounded_y = (
+                round(h.y_pos / GROUP_HEADINGS_WITHIN_Y_DIST)
+                * GROUP_HEADINGS_WITHIN_Y_DIST
+            )
             groups[(h.page, rounded_y)].append(h)
 
         # Access raw metrics and thresholds
@@ -275,6 +279,21 @@ class FontStatisticalAnalyzer:
         freq_max_threshold = self.thresholds["freq_max_threshold"]
         font_freq = self.raw_metrics["frequency"]
 
+        # Temp debug: Print groups with sizes >1 or matching FP texts
+        fp_texts = {
+            "Per-orbit mean",
+            "Previous position",
+            "Lattice",
+            "Othello",
+        }
+        for (page, rounded_y), group in sorted(groups.items()):
+            if len(group) > 1 or any(
+                h.text.strip().startswith(text) for text in fp_texts for h in group
+            ):
+                print(f"Debug: Page {page}, y={rounded_y:.1f}, group_size={len(group)}")
+                for h in group:
+                    print(f"  - {h.text!r} (y_pos={h.y_pos:.1f})")
+
         # Inference: filter and assign levels
         inferred_toc: list[tuple[HeadingLevel, Text, Page]] = []
         for heading in unique_headings:
@@ -282,7 +301,10 @@ class FontStatisticalAnalyzer:
             is_bold = heading.is_bold
             percentile = self._get_percentile(size)
 
-            rounded_y = round(heading.y_pos / Y_ROUNDING) * Y_ROUNDING
+            rounded_y = (
+                round(heading.y_pos / GROUP_HEADINGS_WITHIN_Y_DIST)
+                * GROUP_HEADINGS_WITHIN_Y_DIST
+            )
             group = groups[(heading.page, rounded_y)]
 
             if (
@@ -296,9 +318,9 @@ class FontStatisticalAnalyzer:
 
             page = heading.page
             text = heading.text
-            level = (
-                1 if size >= h1_threshold else HeadingLevel(2)
-            )  # Assuming H2 for non-H1 headings; refine for more levels if needed
+
+            # Assuming H2 for non-H1 headings; refine for more levels if needed
+            level = 1 if size >= h1_threshold else HeadingLevel(2)
 
             inferred_toc.append((HeadingLevel(level), text, page))
 
