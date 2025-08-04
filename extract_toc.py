@@ -133,22 +133,19 @@ class FontStatisticalAnalyzer:
             self.deltas = deltas
 
     def analyze(self, sizes: list[Size]) -> AnalysisData:
-        raw_stats: RawStats = self._compute_raw_stats(sizes)
+        self.raw_metrics = self._compute_raw_metrics(sizes)
+        self.thresholds = self._derive_thresholds()
         merged_stats: dict[str, dict[Size, int]] = self._compute_merged_stats(sizes)
         return AnalysisData(
-            raw_stats=raw_stats,
+            raw_stats=RawStats({
+                **self.raw_metrics,
+                **self.thresholds,
+            }),
             merged_stats=merged_stats,
-            kde_data=(raw_stats.get("kde_x"), raw_stats.get("kde_y")),  # For viz
+            kde_data=(),  # Computed separately on-demand
         )
 
-    def _compute_raw_stats(self, sizes: list[Size]) -> RawStats:
-        """
-        This is where we compute the stats that will be used for filtering.
-        "Heavy" computation lifting should be done here.
-        """
-        import numpy as np
-        from scipy.stats import gaussian_kde
-
+    def _compute_raw_metrics(self, sizes: list[Size]) -> dict:
         if not sizes:
             return {}
         raw_freq: Counter[Size] = Counter(sizes)
@@ -156,38 +153,22 @@ class FontStatisticalAnalyzer:
         median_size: Size = statistics.median(sizes)
         max_size: Size = max(sizes)
         h1_threshold: Size = max_size * 0.9
-        some_threshold: Size = (
-            median_size * 1.1
-        )  # I don't remember what this is. Keeping to see if it's useful.
         general_heading_threshold: Size = mean_size
+        sorted_sizes = sorted(sizes)  # For percentile calcs
+        return {
+            "mean": mean_size,
+            "median": median_size,
+            "max_size": max_size,
+            "h1_threshold": h1_threshold,
+            "general_heading_threshold": general_heading_threshold,
+            "frequency": raw_freq,
+            "sorted_sizes": sorted_sizes,
+            "all_fonts_count": len(sorted_sizes),
+        }
 
-        print(
-            f"mean_size={mean_size}\n"
-            f"median_size={median_size}\n"
-            f"max_size={max_size}\n"
-            f"h1_threshold={h1_threshold}\n"
-            f"some_threshold={some_threshold}\n"
-            f"general_heading_threshold={general_heading_threshold}\n"
-            f"raw_freq={raw_freq}"
-        )
-
-        # KDE
-        sizes_array = np.array(sizes)
-        kde = gaussian_kde(sizes_array, bw_method=0.1)
-        x_kde = np.linspace(min(sizes), max(sizes), 1000)
-        y_kde = kde(x_kde)
-
-        # Dynamic threshold computation
-        freq_values = list(raw_freq.values())
-
-        # median_freq is unused? I don't remember if we intentionally chose mean over median or is this a mistake?
-        median_freq = statistics.median(freq_values) if freq_values else 0
-
-        # Set percentile min to ~35% (even less aggressive than 40% to capture missing H2/H4 headings)
+    def _derive_thresholds(self) -> dict:
+        freq_values = list(self.raw_metrics["frequency"].values())
         size_percentile_min_threshold = 35.0
-
-        # Set freq max threshold to capture H2/H4 headings that may have high frequency due to similar body text sizes
-        # Use 95th percentile of frequencies or minimum of 1400 to allow high-frequency headings
         sorted_freq_values = sorted(freq_values)
         freq_95th_percentile = (
             sorted_freq_values[int(0.95 * len(sorted_freq_values))]
@@ -195,22 +176,76 @@ class FontStatisticalAnalyzer:
             else 0
         )
         freq_max_threshold = max(1400, freq_95th_percentile)
+        return {
+            "size_percentile_min_threshold": size_percentile_min_threshold,
+            "freq_max_threshold": freq_max_threshold,
+        }
 
-        return RawStats(
-            {
-                "mean": mean_size,
-                "median": median_size,
-                "h1_threshold": h1_threshold,
-                "some_threshold": some_threshold,
-                "general_heading_threshold": general_heading_threshold,
-                "max_size": max_size,
-                "frequency": raw_freq,
-                "kde_x": x_kde,
-                "kde_y": y_kde,
-                "size_percentile_min_threshold": size_percentile_min_threshold,
-                "freq_max_threshold": freq_max_threshold,
-            }
-        )
+    def compute_viz_data(self, sizes: list[Size]) -> tuple:
+        import numpy as np
+        from scipy.stats import gaussian_kde
+        sizes_array = np.array(sizes)
+        kde = gaussian_kde(sizes_array, bw_method=0.1)
+        x_kde = np.linspace(min(sizes), max(sizes), 1000)
+        y_kde = kde(x_kde)
+        return (x_kde, y_kde)
+
+    def get_percentile(self, size: Size) -> float:
+        import bisect
+        sorted_sizes = self.raw_metrics["sorted_sizes"]
+        all_fonts_count = self.raw_metrics["all_fonts_count"]
+        count_smaller = bisect.bisect_left(sorted_sizes, size)
+        return (count_smaller / all_fonts_count) * 100 if all_fonts_count > 0 else 0
+
+    def infer_headings(self, potential_headings: list[Heading]) -> list[tuple[HeadingLevel, Text, Page]]:
+        if not potential_headings:
+            return []
+
+        # Uniqueness counting
+        heading_counts: dict[tuple[Text, Size, IsBold], int] = {}
+        for heading in potential_headings:
+            key: tuple[Text, Size, IsBold] = (heading.text, heading.size, heading.is_bold)
+            heading_counts[key] = heading_counts.get(key, 0) + 1
+
+        unique_headings: list[Heading] = [
+            heading for heading in potential_headings
+            if heading_counts[(heading.text, heading.size, heading.is_bold)] == 1
+        ]
+
+        if not unique_headings:
+            return []
+
+        # Access raw metrics and thresholds
+        general_heading_threshold = self.raw_metrics["general_heading_threshold"]
+        h1_threshold = self.raw_metrics["h1_threshold"]
+        size_percentile_min_threshold = self.thresholds["size_percentile_min_threshold"]
+        freq_max_threshold = self.thresholds["freq_max_threshold"]
+        font_freq = self.raw_metrics["frequency"]
+
+        # Inference: filter and assign levels
+        inferred_toc: list[tuple[HeadingLevel, Text, Page]] = []
+        for heading in unique_headings:
+            size = heading.size
+            is_bold = heading.is_bold
+            percentile = self.get_percentile(size)
+
+            if (
+                size < general_heading_threshold
+                or not is_bold
+                or percentile < size_percentile_min_threshold
+                or font_freq.get(size, 0) >= freq_max_threshold
+            ):
+                continue
+
+            page = heading.page
+            text = heading.text
+            level = 1 if size >= h1_threshold else HeadingLevel(2)  # Placeholder updated to 2 for simplicity; refine as needed
+
+            inferred_toc.append((HeadingLevel(level), text, page))
+
+        # Sort by page
+        inferred_toc.sort(key=lambda x: x[2])
+        return inferred_toc
 
     def _compute_merged_stats(self, sizes: list[Size]) -> dict[str, dict[Size, int]]:
         """
@@ -447,110 +482,16 @@ def embedded_strategy(
 def font_strategy(
     raw_data: RawData, analysis_data: AnalysisData
 ) -> list[tuple[HeadingLevel, Text, Page]]:
-    """
-    Infer TOC from font sizes. Relies on the analysis data from `_compute_raw_stats()`.
-    Smell: all analysis logic should be under `FontStatisticalAnalyzer`'s responsibility.
-    """
     potential_headings: list[Heading] = raw_data.get("potential_headings", [])
-    if not potential_headings or not raw_data.get(
-        "all_font_sizes"
-    ):  # Clue: No data available
+    if not potential_headings or not raw_data.get("all_font_sizes"):
         return []
 
-    # Add access to required data for Phase 1 filters
-    all_font_sizes = sorted(raw_data.get("all_font_sizes", []))
-    all_fonts_count = len(all_font_sizes)
-    font_freq = analysis_data["raw_stats"].get("frequency", Counter())
+    # Note: In full integration, pass the analyzer from get_toc; for this edit, assume it's available via analysis_data or recreate
+    # To make it work without further changes, recreate minimally here
+    analyzer = FontStatisticalAnalyzer()
+    analyzer.analyze(raw_data["all_font_sizes"])
 
-    # Two-pass to filter for headings that appear exactly once.
-    #  Rationale is true headings don't repeat throughout the document.
-    heading_counts: dict[tuple[Text, Size, IsBold], int] = {}
-    for heading in potential_headings:
-        key: tuple[Text, Size, IsBold] = (heading.text, heading.size, heading.is_bold)
-        heading_counts[key] = heading_counts.get(key, 0) + 1
-
-    unique_headings: list[Heading] = []
-    for heading in potential_headings:
-        key: tuple[Text, Size, IsBold] = (heading.text, heading.size, heading.is_bold)
-        if heading_counts[key] == 1:
-            unique_headings.append(heading)
-
-    if not unique_headings:
-        return []
-
-    analysis_data["raw_stats"].get(
-        "some_threshold", 0
-    )  # Don't remember what this is for
-    h1_threshold: Size = analysis_data["raw_stats"].get("h1_threshold", 0)
-    general_heading_threshold: Size = analysis_data["raw_stats"].get(
-        "general_heading_threshold", 0
-    )
-
-    # --- Define filter thresholds for Phase 1
-    # Extract dynamic thresholds from analysis data
-    size_percentile_min_threshold = analysis_data["raw_stats"].get(
-        "size_percentile_min_threshold", 35.0
-    )
-    freq_max_threshold = analysis_data["raw_stats"].get("freq_max_threshold", 1400)
-
-    # Assign levels (font-specific heuristics)
-    inferred_toc: list[tuple[HeadingLevel, Text, Page]] = []
-
-    # Dicts for debugging purposes.
-    bysize: defaultdict[Size, list[str]] = defaultdict(list)
-    bypage: defaultdict[Page, list[str]] = defaultdict(list)
-
-    import bisect
-
-    for heading in unique_headings:
-        size = heading.size
-        is_bold = heading.is_bold
-
-        # Compute percentile for this heading's font size
-        count_smaller = bisect.bisect_left(all_font_sizes, size)
-        percentile = (
-            (count_smaller / all_fonts_count) * 100 if all_fonts_count > 0 else 0
-        )
-
-        # Apply Phase 1 filters: size threshold, bold requirement, percentile filter, and frequency filter
-        if (
-            size < general_heading_threshold
-            or not is_bold
-            or percentile < size_percentile_min_threshold
-            or font_freq.get(size, 0) >= freq_max_threshold
-        ):
-            continue
-
-        page = heading.page
-        text = heading.text
-        if size >= h1_threshold:
-            level = 1
-        else:  # Need granularity here
-            level = "?"
-        bysize[size].append(f"{text[:20]!r:<23} │ {level=} │ p.{page:>2}")
-        bypage[page].append(f"{text[:20]!r:<23} │ {level=} │ sz {size:>3.2f}")
-        inferred_toc.append((HeadingLevel(level), text, page))
-
-    print("\n\n==== Unique headings by SIZE ====")
-    # TODO: move as much percentile logic as possible to `compute_raw_stats()`
-    for sz, uniqhd in sorted(bysize.items()):
-        count_smaller = bisect.bisect_left(all_font_sizes, sz)
-        percentile = (
-            (count_smaller / all_fonts_count) * 100 if all_fonts_count > 0 else 0
-        )
-        print(f"--- size={sz}, percentile={percentile:.2f}%, {len(uniqhd)} items ---")
-        for hd in uniqhd:
-            print(f" {hd}")
-
-    print("\n\n==== Unique headings by PAGE ====")
-    for pg, uniqhd in sorted(bypage.items()):
-        print(f"--- page={pg}, {len(uniqhd)} items ---")
-        for hd in uniqhd:
-            print(f" {hd}")
-
-    # Sort by page
-    inferred_toc.sort(key=lambda x: x[2])
-    return inferred_toc
+    return analyzer.infer_headings(potential_headings)
 
 
 # Orchestrator
