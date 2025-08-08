@@ -271,6 +271,17 @@ class FontStatisticalAnalyzer:
             )
             groups[(h.page, rounded_y)].append(h)
 
+        # Build line groups for ALL spans (not just bold). This lets us detect
+        # table rows where a single bold left cell is followed by many numeric
+        # cells on the same line.
+        all_line_groups = defaultdict(list)
+        for s in spans:
+            rounded_y = (
+                round(s.y_pos / GROUP_HEADINGS_WITHIN_Y_DIST)
+                * GROUP_HEADINGS_WITHIN_Y_DIST
+            )
+            all_line_groups[(s.page, rounded_y)].append(s)
+
         # Access raw metrics and thresholds
         general_heading_threshold = self.raw_metrics["general_heading_threshold"]
         h1_threshold = self.raw_metrics["h1_threshold"]
@@ -307,6 +318,26 @@ class FontStatisticalAnalyzer:
                 * GROUP_HEADINGS_WITHIN_Y_DIST
             )
             group = groups[(heading.page, rounded_y)]
+            all_spans_same_line = all_line_groups[(heading.page, rounded_y)]
+
+            # Heuristic: table row detector. Reject if the same line contains
+            # several non-bold numeric-looking spans (typical for table value
+            # columns). This keeps genuine headings (usually a single span) and
+            # excludes bold left-column labels like "Per-orbit mean".
+            def looks_numeric_block(text: str) -> bool:
+                if not any(ch.isdigit() for ch in text):
+                    return False
+                letters = sum(1 for ch in text if ch.isalpha())
+                digits = sum(1 for ch in text if ch.isdigit())
+                # Numeric-dominant token: many digits and almost no letters
+                return digits >= 2 and letters <= 1
+
+            numeric_neighbors = sum(
+                1
+                for s in all_spans_same_line
+                if not s.is_bold and looks_numeric_block(s.text)
+            )
+            is_table_row_like = len(all_spans_same_line) >= 4 and numeric_neighbors >= 2
 
             if (
                 size < general_heading_threshold
@@ -314,6 +345,7 @@ class FontStatisticalAnalyzer:
                 or percentile < size_percentile_min_threshold
                 or font_freq.get(size, 0) >= freq_max_threshold
                 or len(group) > MAX_HEADINGS_IN_SAME_GROUP
+                or is_table_row_like
             ):
                 continue
 
