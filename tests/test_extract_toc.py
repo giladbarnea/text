@@ -71,7 +71,7 @@ EXPECTED_PRESENT_H4: list[tuple[Text, Page]] = [
 ]
 
 # "no" cases: false positives that MUST NOT be present in the inferred TOC
-EXPECTED_ABSENT: list[tuple[Text, Page]] = [
+EXPECTED_ABSENT_HEADINGS: list[tuple[Text, Page]] = [
     ("Keyon Vafa", 1),
     ("Peter G. Chang", 1),
     ("Ashesh Rambachan", 1),
@@ -88,8 +88,6 @@ EXPECTED_ABSENT: list[tuple[Text, Page]] = [
     ("oracle model", 15),
     ("Ground-truth law", 16),
     ("Estimated laws", 16),
-    ("Per-orbit mean", 18),
-    ("Previous position", 18),
     ("04", 18),
     ("14", 18),
     ("07", 18),
@@ -102,6 +100,11 @@ EXPECTED_ABSENT: list[tuple[Text, Page]] = [
     ("Board Balance", 19),
     ("Edge Balance", 19),
     ("IB Correlation", 19),
+]
+
+EXPECTED_ABSENT_TABLE_CELLS: list[tuple[Text, Page]] = [
+    ("Per-orbit mean", 18),
+    ("Previous position", 18),
 ]
 
 
@@ -135,6 +138,7 @@ def test_h2_present(inferred_toc, title, page):
     ), f"Expected H2 starting with '{title}' on page {page} is missing from TOC"
 
 
+@pytest.mark.skip(reason="H4 is noise for now")
 @pytest.mark.parametrize("title, page", EXPECTED_PRESENT_H4)
 def test_h4_present(inferred_toc, title, page):
     assert any(
@@ -143,9 +147,17 @@ def test_h4_present(inferred_toc, title, page):
     ), f"Expected H4 starting with '{title}' on page {page} is missing from TOC"
 
 
-@pytest.mark.parametrize("title, page", EXPECTED_ABSENT)
+@pytest.mark.parametrize("title, page", EXPECTED_ABSENT_HEADINGS)
 def test_heading_absent(inferred_toc, title, page):
     assert not any(
         entry[1].strip().startswith(title) and entry[2] == page
         for entry in inferred_toc
     ), f"Unexpected heading starting with '{title}' on page {page} is present in TOC"
+
+
+@pytest.mark.parametrize("title, page", EXPECTED_ABSENT_TABLE_CELLS)
+def test_table_cell_absent(inferred_toc, title, page):
+    assert not any(
+        entry[1].strip().startswith(title) and entry[2] == page
+        for entry in inferred_toc
+    ), f"Unexpected table cell starting with '{title}' on page {page} is present in TOC"

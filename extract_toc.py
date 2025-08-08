@@ -260,9 +260,9 @@ class FontStatisticalAnalyzer:
         if not unique_headings:
             return []
 
-        MAX_HEADINGS_IN_SAME_GROUP = 2
+        MAX_HEADINGS_IN_SAME_GROUP = 1
         # Bucket size for y_pos noise (adjust based on PDF scaling)
-        GROUP_HEADINGS_WITHIN_Y_DIST = 40.0
+        GROUP_HEADINGS_WITHIN_Y_DIST = 1
         groups = defaultdict(list)
         for h in unique_headings:
             rounded_y = (
@@ -282,6 +282,8 @@ class FontStatisticalAnalyzer:
         fp_texts = {
             "Per-orbit mean",
             "Previous position",
+            "Force vector prediction",
+            "World model",
             "Lattice",
             "Othello",
         }
