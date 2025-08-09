@@ -1,26 +1,21 @@
 #!/usr/bin/env /opt/homebrew/bin/uvx --with=PyMuPDF,plotly,scipy,pytest python3.13 -m pytest
+# type: ignore
 import re
 from pathlib import Path
 
 import pytest
 
-# Assuming the parser script is named 'extract_toc.py' and is importable;
-# adjust the import if needed.
 from extract_toc import Page, Text, get_toc
 
-# Hardcode the PDF path for testing.
 PDF_PATH = Path(__file__).parent / "what-foundational-models-found.pdf"
 
 
 # --- "YES" CASES: TRUE HEADINGS THAT MUST BE IN THE TOC ---
-
-# H0 - Document titles (font size ~14.35)
 EXPECTED_PRESENT_H0: list[tuple[Text, Page]] = [
     ("What Has a Foundation Model Found?", 1),
     ("Using Inductive Bias to Probe for World Models", 1),
 ]
 
-# H1 - Major sections (font size ~11.96)
 EXPECTED_PRESENT_H1: list[tuple[Text, Page]] = [
     ("Abstract", 1),
     ("1. Introduction", 1),
@@ -41,7 +36,6 @@ EXPECTED_PRESENT_H1: list[tuple[Text, Page]] = [
     ("H. What are models using to extrapolate?", 19),
 ]
 
-# H2 - Subsections (font size ~9.96)
 EXPECTED_PRESENT_H2: list[tuple[Text, Page]] = [
     ("2.1. Comparing foundation models to world models", 2),
     ("2.2. Special case: finite state space and binary outputs.", 3),
@@ -51,8 +45,6 @@ EXPECTED_PRESENT_H2: list[tuple[Text, Page]] = [
     ("LLM Prompt", 17),
 ]
 
-# H4 - Sub-subsections (font size ~9.9-10.1)
-# These are often bolded text within paragraphs.
 EXPECTED_PRESENT_H4: list[tuple[Text, Page]] = [
     ("Data and tasks.", 2),
     ("Foundation models:", 2),
