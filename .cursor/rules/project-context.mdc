@@ -1,0 +1,49 @@
+---
+alwaysApply: true
+---
+# Project Context
+
+This project is a Python package for converting, slicing and dicing textual data.
+
+## Current State
+
+It's in VERY early stages: the main focus is on robustly extracting table of contents from PDFs (@extract_toc.py). Table of contents are crucial for converting PDFs to other formats.
+
+### `extract_toc.py`
+
+Because PDFs are a mess, it relies on a combination of heuristics and statistics to infer the table of contents. The effort of improving them is where the most potential value, at least in the near future, lies.
+
+The mental framework when working on them is high precision and high recall: capturing all the headings; don't erronously include any non-heading text.
+
+It currently has a perfect score on the first test case -- The "What Has a Foundation Model Found? paper" (tests/test_what_foundational_models_found).
+
+The current effort is to expand the coverage to other PDFs, which ideally pose categorically different challenges from each other, while keeping up the high precision and high recall (and avoiding regression of course).
+
+When weighing the tradeoffs between multiple heuristics for inferring TOC, a rule of thumb is to prefer ones that are less sensitive to any particular PDF.
+Of course, there is no such thing as a perfect heuristic, so concessions are inevitable.
+
+
+
+## Development
+
+Package management as well as running executables is done with [uv](https://docs.astral.sh/uv/). Not pip, not poetry, not venv.
+
+Tests are run with the `test.sh` script.
+
+Python version is 3.13.
+
+Python is run with `uv run python`.
+Tests are run with `uv run pytest`. `test.sh` is a wrapper around it.
+Any executable installed in the virtual environment is run with `uv run <executable>`.
+
+## Being an Effective AI Agent
+
+1. You work best when you have a way to verify whether your work works or not. Probe for one if not explicitly provided. Having a way to verify your work gives you the ability for "trial and error", rather than just shooting in the dark once and hoping for the best.
+2. Know your weaknesses: your eagerness to solve a problem 
+הרצון העז שלך לפתור בעיה מביא איתו נטייה ל tunnel vision: אתה אמנם תתקן את הבעיה אבל בלי כוונה תייצר code duplication, תחרוג מקווי ה design הקימיים ואף will introduce a regression בחלקים אחרים של הפרוייקט שלא נתת עליהם את דעתך. 
+
+
+
+
+
+
