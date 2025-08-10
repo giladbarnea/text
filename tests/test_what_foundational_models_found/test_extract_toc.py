@@ -1,4 +1,3 @@
-#!/usr/bin/env /opt/homebrew/bin/uvx --with=PyMuPDF,plotly,scipy,pytest python3.13 -m pytest
 # type: ignore
 import re
 from pathlib import Path

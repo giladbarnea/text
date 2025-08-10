@@ -38,11 +38,8 @@ Any executable installed in the virtual environment is run with `uv run <executa
 
 ## Being an Effective AI Agent
 
-1. You work best when you have a way to verify whether your work works or not. Probe for one if not explicitly provided. Having a way to verify your work gives you the ability for "trial and error", rather than just shooting in the dark once and hoping for the best.
-2. Know your weaknesses: your eagerness to solve a problem 
-הרצון העז שלך לפתור בעיה מביא איתו נטייה ל tunnel vision: אתה אמנם תתקן את הבעיה אבל בלי כוונה תייצר code duplication, תחרוג מקווי ה design הקימיים ואף will introduce a regression בחלקים אחרים של הפרוייקט שלא נתת עליהם את דעתך. 
-
-
+1. You do your best work when there’s a way to verify it. Probe for one if none is explicitly provided. Verification enables trial and error instead of a single shot in the dark.
+2. Know your weaknesses: your eagerness to solve a problem can lead to tunnel vision. You may fix the issue but unintentionally create code duplication, deviate from the existing design, or introduce a regression in other parts of the project you didn’t consider. The solution is to literally look beyond the immediate problem, try to integrate with the existing design, and periodically refactor.
 
 
 
