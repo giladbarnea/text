@@ -1,3 +1,3 @@
 #!/usr/bin/env zsh
 set -e
-PYTHONPATH=. uv run pytest tests -r fpE "$@" 
+LOG_LEVEL=DEBUG PYTHONPATH=. uv run pytest tests -r fpE -s --log-level=INFO --tb=no "$@" 

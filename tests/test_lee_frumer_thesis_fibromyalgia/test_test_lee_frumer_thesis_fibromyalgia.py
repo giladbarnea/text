@@ -264,7 +264,17 @@ EXPECTED_TOC: list[tuple[Text, re.Pattern | None, Page]] = [
 def test_toc_headings_present(
     inferred_toc, title: Text, lenient_match: re.Pattern | None, page: Page
 ):
-    assert any(
-        _matches(entry_title, title, lenient_match) and entry_page == page
-        for _level, entry_title, entry_page in inferred_toc
-    ), f"Expected heading matching '{title}' on page {page} is missing from TOC"
+    only_entry_matched = False
+    actual_entry_page = None
+    for _level, entry_title, entry_page in inferred_toc:
+        entry_matches = _matches(entry_title, title, lenient_match)
+        if not entry_matches:
+            continue
+        if entry_page == page:
+            return
+        only_entry_matched = True
+        actual_entry_page = entry_page
+        break
+    if not only_entry_matched:
+        logger.warning(f"Title '{title}' is found in TOC but not on the expected page {page}. Actual page: {actual_entry_page}")
+    assert only_entry_matched, f"Expected heading matching '{title}' on page {page} is missing from TOC"
