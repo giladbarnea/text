@@ -5,7 +5,23 @@ import re
 import sys
 import json
 from pathlib import Path
+from typing import Mapping, TypeVar
+from contextlib import suppress
 os.environ["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY", (Path.home() / ".openai-api-key").read_text().strip())
+
+T = TypeVar("T")
+
+def dictget(mapping: Mapping[str, T], key: str) -> T:
+    with suppress(KeyError):
+        return mapping[key]
+    truncated = key
+    last_tried = key
+    while len(truncated) >= 5:
+        truncated = truncated[:-1]
+        last_tried = truncated
+        with suppress(KeyError):
+            return mapping[truncated]
+    raise KeyError(f"{key} (last tried: {last_tried})")
 
 def get_doc_title(text: str) -> str | bool:
     lines = text.splitlines()
@@ -77,12 +93,13 @@ def gpt5_mini(message: str, *, reasoning_effort: str) -> str:
 DIVISION_PROMPT = """The following {text_name} is a long text that I plan to pass through an LLM to make it text-to-speech-friendly (text optimized for TTS). My strategy is to give it one part at a time so as not to overwhelm its context window.
 My current naive implementation splits the text by Markdown headers. However, this has an inherent problem: the length and semantic weight of sections vary widely. Put differently, the document is best taken in as a few sequences of subsequent sections that should be treated as one piece. Individually, they don't have enough semantic weight or meaningful length to justify processing them solo. Once in a while, you'll find a single section that is a significant semantic group on its own, justifying processing it independently; but that's the exception to the rule.
 Group the sections so it makes sense to pass whole groups to the text-to-speech LLM.
-Output a JSON object where the keys are "group_1", "group_2", etc., and the values are string arrays of section names, as you see fit.
+Output a JSON object where the keys are "group_1", "group_2", etc., and the values are string arrays of section names, as you see fit. Use the section names exactly as they appear in the <section_stats> section.
 The output should be a valid JSON object, and only the JSON object, nothing else.
 
 ---
-
+<section_stats>
 {section_stats}
+</section_stats>
 
 ---
 
@@ -125,6 +142,11 @@ def main():
     division_response = gpt5(division_prompt, reasoning_effort="low")
     division_json: dict[str, list[str]] = json.loads(division_response)
     print(division_json, file=sys.stderr)
+
+    # Validate LLM-produced headings resolve against parsed sections
+    for group_headings in division_json.values():
+        for section_heading in group_headings:
+            dictget(sections, section_heading)
     tts_prompt: str = requests.get(prompt_cdn_url).text
     tts_prompt = f"The given content is a part of '{doc_title}'.\n\n{tts_prompt}"
     tts_parts = []
@@ -132,7 +154,7 @@ def main():
     for i, section_group_headings in enumerate(division_json.values()):
         joined_group = ""
         for section_heading in section_group_headings:
-            section_body = sections[section_heading]
+            section_body = dictget(sections, section_heading)
             joined_group += f"\n{section_heading}\n{section_body}"
 
         group_title = f"Part of '{doc_title}' encompassing sections " + ", ".join(
@@ -155,7 +177,7 @@ def main():
         tts_parts.append(llm_response)
         if i < len(division_json) - 1:
             for section_heading in section_group_headings:
-                section_body = sections[section_heading]
+                section_body = dictget(sections, section_heading)
                 joined_group += f"\n{section_heading}\n{section_body}"
                 essence = gpt5_mini(
                     f"The given section is a part of '{doc_title}'.\n\n---\n\n<{section_heading}>\n{section_body}\n</{section_heading}>\n\nOutput what it is about in 10 words or less. No need to start with the section name or any intro, no explanations, just output the essence of it.",
