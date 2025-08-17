@@ -22,7 +22,7 @@ def dictget(mapping: Mapping[str, T], key: str) -> T:
         return mapping[key]
     truncated = key
     last_tried = key
-    while len(truncated) >= 5:
+    while len(truncated) >= 7:
         truncated = truncated[:-1]
         last_tried = truncated
         with suppress(KeyError):
@@ -266,15 +266,17 @@ def main():
             future_to_prompt = {}
             for prompt, i, group_title in tts_prompts:
                 print(
-                    f"\n      -------- Group {i}: {group_title} --------",
+                    f"\n      -------- Started processing group {i}: {group_title} --------",
                     file=sys.stderr,
                 )
-                future = executor.submit(
-                    partial(gpt5, reasoning_effort="high"), prompt
-                )
+                future = executor.submit(partial(gpt5, reasoning_effort="high"), prompt)
                 future_to_prompt[future] = (prompt, i, group_title)
 
             for future in as_completed(future_to_prompt):
+                print(
+                    f"\n      -------- Finished processing group {i}: {group_title} --------",
+                    file=sys.stderr,
+                )
                 prompt, i, group_title = future_to_prompt[future]
                 tts_parts[i] = future.result()
         print("\n      -------- Done converting --------", file=sys.stderr)
