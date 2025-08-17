@@ -171,11 +171,15 @@ def main():
             text = f.read()
         prompt_cdn_url = "https://raw.githubusercontent.com/giladbarnea/llm-templates/refs/heads/main/text/readable.md"
 
+        # ---[ Doc Title ]---
         doc_title = get_doc_title(text)
         if not doc_title:
             print("No title found", file=sys.stderr)
             return
+
         sections: dict[str, str] = split_on_h2(text)
+
+        # ---[ Group Sections ]---
         sections_info = [
             f"{i + 1: >2}. '{part_heading}': {len(part_body.splitlines())} lines, {len(part_body.split(' '))} words"
             for i, (part_heading, part_body) in enumerate(sections.items())
@@ -191,20 +195,23 @@ def main():
         division_prompt = DIVISION_PROMPT.format(
             text_name=doc_title, section_stats=section_stats, text=text
         )
+        print("\n      -------- Grouping sections --------", file=sys.stderr)
         division_response = gpt5(division_prompt, reasoning_effort="medium")
-        division_json: dict[str, list[str]] = json.loads(division_response)
-        pprint(division_json, indent=2, stream=sys.stderr, width=120, sort_dicts=False)
+        section_groups: dict[str, list[str]] = json.loads(division_response)
+        pprint(section_groups, indent=2, stream=sys.stderr, width=120, sort_dicts=False)
 
-        # Validate LLM-produced headings resolve against parsed sections
-        for group_headings in division_json.values():
+        # Validate LLM-produced section_groups resolve against parsed sections
+        for group_headings in section_groups.values():
             for section_heading in group_headings:
                 dictget(sections, section_heading)
 
+        # ---[ Essences pre compute ]---
+        print("\n      -------- Precomputing section essences --------", file=sys.stderr)
         # Precompute essences for all referenced sections in parallel (max 4 workers)
         all_section_essences: dict[str, str] = {}
-        with ThreadPoolExecutor(max_workers=4) as executor:
+        with ThreadPoolExecutor(max_workers=max(4, len(section_groups))) as executor:
             future_to_heading = {}
-            for group_headings in division_json.values():
+            for group_headings in section_groups.values():
                 for h in group_headings:
                     section_body = dictget(sections, h)
                     prompt = (
@@ -218,41 +225,41 @@ def main():
             for future in as_completed(future_to_heading):
                 h = future_to_heading[future]
                 all_section_essences[h] = future.result()
+
+        # ---[ TTS prompt ]---
+        print("\n      -------- Starting group processing --------", file=sys.stderr)
         tts_prompt: str = requests.get(prompt_cdn_url).text
         tts_prompt = f"The given content is a part of '{doc_title}'.\n\n{tts_prompt}"
         tts_parts = []
-        section_essences: dict[str, str] = {}
-        for i, section_group_headings in enumerate(division_json.values()):
-            joined_group = ""
+        for i, section_group_headings in enumerate(section_groups.values()):
+            # --[ Str join section contents ]--
+            joined_group_content = ""
             for section_heading in section_group_headings:
                 section_body = dictget(sections, section_heading)
-                joined_group += f"\n{section_heading}\n{section_body}"
+                joined_group_content += f"\n{section_heading}\n{section_body}"
 
             group_title = f"Part of '{doc_title}' encompassing sections " + ", ".join(
                 [f"'{h.removeprefix('##').lstrip()}'" for h in section_group_headings]
             )
             group_prompt = tts_prompt.replace("${tag}", group_title)
-            if section_essences:
+
+            # --[ Append formatted previous essences to prompt ]
+            if all_section_essences:
                 previous_context = "\n".join(
                     [
                         f"{i + 1}. {k}: {v}"
-                        for i, (k, v) in enumerate(section_essences.items())
+                        for i, (k, v) in enumerate(all_section_essences.items())
                     ]
                 )
                 group_prompt += f"\n\nPreceding sections for context (do not process these, only use them for context):\n{previous_context}"
-            group_prompt = f"{group_prompt}\n\n---\n\n<{group_title}\n{joined_group}\n</{group_title}>"
+            group_prompt = f"{group_prompt}\n\n---\n\n<{group_title}\n{joined_group_content}\n</{group_title}>"
             print(
                 f"\n      -------- Group {i}: {group_title} --------", file=sys.stderr
             )
+
+            # --[ Convert group to TTS friendly ]--
             llm_response = gpt5(group_prompt, reasoning_effort="high")
             tts_parts.append(llm_response)
-            if i < len(division_json) - 1:
-                for section_heading in section_group_headings:
-                    section_body = dictget(sections, section_heading)
-                    joined_group += f"\n{section_heading}\n{section_body}"
-                    section_essences[section_heading] = all_section_essences[
-                        section_heading
-                    ]
 
         print("\n      -------- Done --------", file=sys.stderr)
         with open(args.output, "w") as f:
