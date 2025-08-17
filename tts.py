@@ -65,6 +65,40 @@ def split_on_h2(text: str) -> dict[str, str]:
     return result
 
 
+def paranoid_response_json(response: requests.Response) -> dict:
+    response_data = response.json()
+    if not response_data:
+        print("No response data", file=sys.stderr)
+        from pdbr import set_trace
+
+        set_trace()
+    choices = response_data["choices"]
+    if not choices:
+        print("No choices in response", file=sys.stderr)
+        from pdbr import set_trace
+
+        set_trace()
+    first_choice = choices[0]
+    if not first_choice:
+        print("No first choice in response", file=sys.stderr)
+        from pdbr import set_trace
+
+        set_trace()
+    message = first_choice["message"]
+    if not message:
+        print("No message in first choice", file=sys.stderr)
+        from pdbr import set_trace
+
+        set_trace()
+    content = message["content"]
+    if not content:
+        print("No content in message", file=sys.stderr)
+        from pdbr import set_trace
+
+        set_trace()
+    return content
+
+
 def gpt5(message: str, *, reasoning_effort: str) -> str:
     response = requests.post(
         "https://api.openai.com/v1/chat/completions",
@@ -78,7 +112,12 @@ def gpt5(message: str, *, reasoning_effort: str) -> str:
             "reasoning_effort": reasoning_effort,
         },
     )
-    return response.json()["choices"][0]["message"]["content"]
+    if not response.ok:
+        print("Response not ok", file=sys.stderr)
+        from pdbr import set_trace
+
+        set_trace()
+    return paranoid_response_json(response)
 
 
 def gpt5_mini(message: str, *, reasoning_effort: str) -> str:
@@ -94,7 +133,12 @@ def gpt5_mini(message: str, *, reasoning_effort: str) -> str:
             "reasoning_effort": reasoning_effort,
         },
     )
-    return response.json()["choices"][0]["message"]["content"]
+    if not response.ok:
+        print("Response not ok", file=sys.stderr)
+        from pdbr import set_trace
+
+        set_trace()
+    return paranoid_response_json(response)
 
 
 DIVISION_PROMPT = """The following {text_name} is a long text that I plan to pass through an LLM to make it text-to-speech-friendly (text optimized for TTS). My strategy is to give it one part at a time so as not to overwhelm its context window.
@@ -196,10 +240,10 @@ def main():
                     ]
                 )
                 group_prompt += f"\n\nPreceding sections for context (do not process these, only use them for context):\n{previous_context}"
-            group_prompt = (
-                f"{group_prompt}\n\n---\n\n<{group_title}\n{joined_group}\n</{group_title}>"
+            group_prompt = f"{group_prompt}\n\n---\n\n<{group_title}\n{joined_group}\n</{group_title}>"
+            print(
+                f"\n      -------- Group {i}: {group_title} --------", file=sys.stderr
             )
-            print(f"\n      -------- Group {i}: {group_title} --------", file=sys.stderr)
             llm_response = gpt5(group_prompt, reasoning_effort="high")
             tts_parts.append(llm_response)
             if i < len(division_json) - 1:
