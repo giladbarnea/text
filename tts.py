@@ -1,4 +1,7 @@
 import os
+import re
+import base64
+import mimetypes
 import requests
 import argparse
 import sys
@@ -65,6 +68,20 @@ def split_on_h2(text: str) -> dict[str, str]:
     return result
 
 
+def extract_file_paths(text: str) -> set[str]:
+    return set(re.findall(r"\[.*?\]\((.*?)\)", text) or [])
+
+
+def resolve_to_existing_paths(input_file_path: str, file_paths: set[str]) -> set[str]:
+    existing_paths: set[str] = set()
+    for path in file_paths:
+        if os.path.exists(os.path.join(os.path.dirname(input_file_path), path)):
+            existing_paths.add(os.path.join(os.path.dirname(input_file_path), path))
+        elif os.path.exists(path):
+            existing_paths.add(path)
+    return existing_paths
+
+
 def paranoid_response_json(response: requests.Response) -> dict:
     response_data = response.json()
     if not response_data:
@@ -99,7 +116,8 @@ def paranoid_response_json(response: requests.Response) -> dict:
     return content
 
 
-def gpt5(message: str, *, reasoning_effort: str) -> str:
+def gpt5(message: str, *more_content_parts: dict, reasoning_effort: str) -> str:
+    content_parts = [{"type": "text", "text": message}, *more_content_parts]
     response = requests.post(
         "https://api.openai.com/v1/chat/completions",
         headers={
@@ -108,7 +126,7 @@ def gpt5(message: str, *, reasoning_effort: str) -> str:
         },
         json={
             "model": "gpt-5",
-            "messages": [{"role": "user", "content": message}],
+            "messages": [{"role": "user", "content": content_parts}],
             "reasoning_effort": reasoning_effort,
         },
     )
@@ -192,18 +210,29 @@ def main():
             section_stats,
             file=sys.stderr,
         )
-        division_prompt = DIVISION_PROMPT.format(
-            text_name=doc_title, section_stats=section_stats, text=text
-        )
-        print("\n      -------- Grouping sections --------", file=sys.stderr)
-        division_response = gpt5(division_prompt, reasoning_effort="medium")
-        section_groups: dict[str, list[str]] = json.loads(division_response)
-        pprint(section_groups, indent=2, stream=sys.stderr, width=120, sort_dicts=False)
+        if len(text) > 10_000:
+            division_prompt = DIVISION_PROMPT.format(
+                text_name=doc_title, section_stats=section_stats, text=text
+            )
+            print("\n      -------- Grouping sections --------", file=sys.stderr)
+            division_response = gpt5(division_prompt, reasoning_effort="medium")
+            section_groups: dict[str, list[str]] = json.loads(division_response)
+            pprint(
+                section_groups, indent=2, stream=sys.stderr, width=120, sort_dicts=False
+            )
 
-        # Validate LLM-produced section_groups resolve against parsed sections
-        for group_headings in section_groups.values():
-            for section_heading in group_headings:
-                dictget(sections, section_heading)
+            # Validate LLM-produced section_groups resolve against parsed sections
+            for group_headings in section_groups.values():
+                for section_heading in group_headings:
+                    dictget(sections, section_heading)
+        else:
+            print(
+                "\n      -------- Text is short enough, skipping grouping --------",
+                file=sys.stderr,
+            )
+            section_groups = {
+                "group_1": list(sections.keys()),
+            }
 
         # ---[ Essences pre compute ]---
         print(
@@ -227,6 +256,14 @@ def main():
             for future in as_completed(future_to_heading):
                 h = future_to_heading[future]
                 all_section_essences[h] = future.result()
+
+        pprint(
+            all_section_essences,
+            indent=2,
+            stream=sys.stderr,
+            width=120,
+            sort_dicts=False,
+        )
 
         # ---[ TTS prompt ]---
         print("\n      -------- Starting group processing --------", file=sys.stderr)
@@ -269,7 +306,31 @@ def main():
                     f"\n      -------- Started processing group {i}: {group_title} --------",
                     file=sys.stderr,
                 )
-                future = executor.submit(partial(gpt5, reasoning_effort="high"), prompt)
+                file_paths: set[str] = extract_file_paths(prompt)
+                existing_paths: set[str] = resolve_to_existing_paths(
+                    args.input, file_paths
+                )
+                if len(file_paths) != len(existing_paths):
+                    print(
+                        f"Warning: {len(file_paths) - len(existing_paths)} file paths did not resolve to existing paths",
+                        file=sys.stderr,
+                    )
+                more_content_parts = []
+                for path in existing_paths:
+                    mime_type, _ = mimetypes.guess_type(path)
+                    if not mime_type or not mime_type.startswith("image/"):
+                        continue
+                    with open(path, "rb") as image_file:
+                        b64 = base64.b64encode(image_file.read()).decode("utf-8")
+                    more_content_parts.append(
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": f"data:{mime_type};base64,{b64}"},
+                        }
+                    )
+                future = executor.submit(
+                    partial(gpt5, prompt, *more_content_parts, reasoning_effort="high")
+                )
                 future_to_prompt[future] = (prompt, i, group_title)
 
             for future in as_completed(future_to_prompt):
