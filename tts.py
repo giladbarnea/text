@@ -1,9 +1,9 @@
 import os
 import requests
 import argparse
-import re
 import sys
 import json
+from functools import partial
 from pathlib import Path
 from typing import Mapping, TypeVar
 from contextlib import suppress
@@ -206,10 +206,12 @@ def main():
                 dictget(sections, section_heading)
 
         # ---[ Essences pre compute ]---
-        print("\n      -------- Precomputing section essences --------", file=sys.stderr)
+        print(
+            "\n      -------- Precomputing section essences --------", file=sys.stderr
+        )
         # Precompute essences for all referenced sections in parallel (max 4 workers)
         all_section_essences: dict[str, str] = {}
-        with ThreadPoolExecutor(max_workers=max(4, len(section_groups))) as executor:
+        with ThreadPoolExecutor(max_workers=min(4, len(section_groups))) as executor:
             future_to_heading = {}
             for group_headings in section_groups.values():
                 for h in group_headings:
@@ -219,7 +221,7 @@ def main():
                         "Output what it is about in 10 words or less. No need to start with the section name or any intro, no explanations, just output the essence of it."
                     )
                     future = executor.submit(
-                        lambda p: gpt5_mini(p, reasoning_effort="low"), prompt
+                        partial(gpt5_mini, reasoning_effort="low"), prompt
                     )
                     future_to_heading[future] = h
             for future in as_completed(future_to_heading):
@@ -230,7 +232,8 @@ def main():
         print("\n      -------- Starting group processing --------", file=sys.stderr)
         tts_prompt: str = requests.get(prompt_cdn_url).text
         tts_prompt = f"The given content is a part of '{doc_title}'.\n\n{tts_prompt}"
-        tts_parts = []
+        # --[ Collect prompts for each group ]--
+        tts_prompts = []
         for i, section_group_headings in enumerate(section_groups.values()):
             # --[ Str join section contents ]--
             joined_group_content = ""
@@ -253,15 +256,30 @@ def main():
                 )
                 group_prompt += f"\n\nPreceding sections for context (do not process these, only use them for context):\n{previous_context}"
             group_prompt = f"{group_prompt}\n\n---\n\n<{group_title}\n{joined_group_content}\n</{group_title}>"
-            print(
-                f"\n      -------- Group {i}: {group_title} --------", file=sys.stderr
-            )
 
             # --[ Convert group to TTS friendly ]--
-            llm_response = gpt5(group_prompt, reasoning_effort="high")
-            tts_parts.append(llm_response)
+            tts_prompts.append((group_prompt, i, group_title))
 
-        print("\n      -------- Done --------", file=sys.stderr)
+        # --[ Process groups in parallel ]--
+        tts_parts = [None] * len(tts_prompts)
+        with ThreadPoolExecutor(max_workers=min(4, len(tts_prompts))) as executor:
+            future_to_prompt = {}
+            for prompt, i, group_title in tts_prompts:
+                print(
+                    f"\n      -------- Group {i}: {group_title} --------",
+                    file=sys.stderr,
+                )
+                future = executor.submit(
+                    partial(gpt5, reasoning_effort="high"), prompt
+                )
+                future_to_prompt[future] = (prompt, i, group_title)
+
+            for future in as_completed(future_to_prompt):
+                prompt, i, group_title = future_to_prompt[future]
+                tts_parts[i] = future.result()
+        print("\n      -------- Done converting --------", file=sys.stderr)
+
+        # --[ Write output ]--
         with open(args.output, "w") as f:
             f.write(f"# {doc_title}\n\n")
             for i, section in enumerate(tts_parts):
