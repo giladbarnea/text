@@ -16,6 +16,9 @@ from pprint import pprint
 os.environ["OPENAI_API_KEY"] = os.getenv(
     "OPENAI_API_KEY", (Path.home() / ".openai-api-key").read_text().strip()
 )
+os.environ["XAI_API_KEY"] = os.getenv(
+    "XAI_API_KEY", (Path.home() / ".grok-api-key").read_text().strip()
+)
 
 T = TypeVar("T")
 
@@ -52,7 +55,15 @@ def split_on_h2(text: str) -> dict[str, str]:
         if line.startswith("## "):
             # Save previous section if it exists
             if current_heading is not None:
-                result[current_heading] = "\n".join(current_content)
+                if current_heading in result:
+                    v = 2
+                    unique_current_heading = current_heading
+                    while unique_current_heading in result:
+                        unique_current_heading = current_heading + f" ({v})"
+                        v += 1
+                    result[unique_current_heading] = "\n".join(current_content)
+                else:
+                    result[current_heading] = "\n".join(current_content)
 
             # Start new section
             current_heading = line
@@ -63,7 +74,15 @@ def split_on_h2(text: str) -> dict[str, str]:
 
     # Handle the last section
     if current_heading is not None:
-        result[current_heading] = "\n".join(current_content)
+        if current_heading in result:
+            v = 2
+            unique_current_heading = current_heading
+            while unique_current_heading in result:
+                unique_current_heading = current_heading + f" ({v})"
+                v += 1
+            result[unique_current_heading] = "\n".join(current_content)
+        else:
+            result[current_heading] = "\n".join(current_content)
 
     return result
 
@@ -137,7 +156,26 @@ def gpt5(message: str, *more_content_parts: dict, reasoning_effort: str) -> str:
         set_trace()
     return paranoid_response_json(response)
 
+def grok(message: str, *more_content_parts: dict) -> str:
+    content_parts = [{"type": "text", "text": message}, *more_content_parts]
+    response = requests.post(
+        "https://api.x.ai/v1/chat/completions",
+        headers={
+            "Authorization": f"Bearer {os.getenv('XAI_API_KEY')}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "model": "grok-4-latest",
+            "messages": [{"role": "user", "content": content_parts}],
+            "stream": False,
+        },
+    )
+    if not response.ok:
+        print("Response not ok", file=sys.stderr)
+        from pdbr import set_trace
 
+        set_trace()
+    return paranoid_response_json(response)
 def gpt5_mini(message: str, *, reasoning_effort: str) -> str:
     response = requests.post(
         "https://api.openai.com/v1/chat/completions",
@@ -222,9 +260,18 @@ def main():
             )
 
             # Validate LLM-produced section_groups resolve against parsed sections
+            grouped_headings_count = 0
             for group_headings in section_groups.values():
                 for section_heading in group_headings:
+                    grouped_headings_count += 1
                     dictget(sections, section_heading)
+                    
+            if grouped_headings_count != len(sections):
+                print(f"Error: {grouped_headings_count} grouped headings do not resolve against parsed sections", file=sys.stderr)
+                from pdbr import set_trace
+                set_trace()
+                exit(1)
+            
         else:
             print(
                 "\n      -------- Text is short enough, skipping grouping --------",
