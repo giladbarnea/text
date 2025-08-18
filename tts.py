@@ -6,6 +6,7 @@ import requests
 import argparse
 import sys
 import json
+from diskcache import Cache
 from functools import partial
 from pathlib import Path
 from typing import Mapping, TypeVar
@@ -44,26 +45,30 @@ def get_doc_title(text: str) -> str | bool:
     return False
 
 
-def split_on_h2(text: str) -> dict[str, str]:
-    """Returns a { "## <heading>": "<heading content>" }"""
+def split_on_h2(text: str) -> tuple[str, dict[str, str]]:
+    """Returns a tuple of (text, { "## <heading>": "<heading content>" }).
+    The returned text is the text with duplicate headings added with a number suffix."""
     lines = text.splitlines()
-    result = {}
+    lines_with_unique_headings = []
+    section_bodies = {}
     current_heading = None
     current_content = []
 
-    for line in lines:
+    for i, line in enumerate(lines):
+        lines_with_unique_headings.append(line)
         if line.startswith("## "):
             # Save previous section if it exists
             if current_heading is not None:
-                if current_heading in result:
+                if current_heading in section_bodies:
                     v = 2
                     unique_current_heading = current_heading
-                    while unique_current_heading in result:
+                    while unique_current_heading in section_bodies:
                         unique_current_heading = current_heading + f" ({v})"
                         v += 1
-                    result[unique_current_heading] = "\n".join(current_content)
+                    section_bodies[unique_current_heading] = "\n".join(current_content)
+                    lines_with_unique_headings[i] = unique_current_heading
                 else:
-                    result[current_heading] = "\n".join(current_content)
+                    section_bodies[current_heading] = "\n".join(current_content)
 
             # Start new section
             current_heading = line
@@ -74,17 +79,18 @@ def split_on_h2(text: str) -> dict[str, str]:
 
     # Handle the last section
     if current_heading is not None:
-        if current_heading in result:
+        if current_heading in section_bodies:
             v = 2
             unique_current_heading = current_heading
-            while unique_current_heading in result:
+            while unique_current_heading in section_bodies:
                 unique_current_heading = current_heading + f" ({v})"
                 v += 1
-            result[unique_current_heading] = "\n".join(current_content)
+            lines_with_unique_headings[i] = unique_current_heading
+            section_bodies[unique_current_heading] = "\n".join(current_content)
         else:
-            result[current_heading] = "\n".join(current_content)
+            section_bodies[current_heading] = "\n".join(current_content)
 
-    return result
+    return "\n".join(lines_with_unique_headings), section_bodies
 
 
 def extract_file_paths(text: str) -> set[str]:
@@ -135,6 +141,11 @@ def paranoid_response_json(response: requests.Response) -> dict:
     return content
 
 
+def diskcache(cache_dir="/tmp/tts", **memo_kwargs):
+    return Cache(cache_dir).memoize(**memo_kwargs)
+
+
+@diskcache(expire=60 * 60)
 def gpt5(message: str, *more_content_parts: dict, reasoning_effort: str) -> str:
     content_parts = [{"type": "text", "text": message}, *more_content_parts]
     response = requests.post(
@@ -156,26 +167,7 @@ def gpt5(message: str, *more_content_parts: dict, reasoning_effort: str) -> str:
         set_trace()
     return paranoid_response_json(response)
 
-def grok(message: str, *more_content_parts: dict) -> str:
-    content_parts = [{"type": "text", "text": message}, *more_content_parts]
-    response = requests.post(
-        "https://api.x.ai/v1/chat/completions",
-        headers={
-            "Authorization": f"Bearer {os.getenv('XAI_API_KEY')}",
-            "Content-Type": "application/json",
-        },
-        json={
-            "model": "grok-4-latest",
-            "messages": [{"role": "user", "content": content_parts}],
-            "stream": False,
-        },
-    )
-    if not response.ok:
-        print("Response not ok", file=sys.stderr)
-        from pdbr import set_trace
 
-        set_trace()
-    return paranoid_response_json(response)
 def gpt5_mini(message: str, *, reasoning_effort: str) -> str:
     response = requests.post(
         "https://api.openai.com/v1/chat/completions",
@@ -197,6 +189,12 @@ def gpt5_mini(message: str, *, reasoning_effort: str) -> str:
     return paranoid_response_json(response)
 
 
+def cached_gpt5_mini(message: str, *, reasoning_effort: str) -> str:
+    return diskcache(expire=60 * 60 * 24 * 30)(gpt5_mini)(
+        message, reasoning_effort=reasoning_effort
+    )
+
+
 DIVISION_PROMPT = """The following {text_name} is a long text that I plan to pass through an LLM to make it text-to-speech-friendly (text optimized for TTS). My strategy is to give it one part at a time so as not to overwhelm its context window.
 My current naive implementation splits the text by Markdown headers. However, this has an inherent problem: the length and semantic weight of sections vary widely. Put differently, the document is best taken in as a few sequences of subsequent sections that should be treated as one piece. Individually, they don't have enough semantic weight or meaningful length to justify processing them solo. Once in a while, you'll find a single section that is a significant semantic group on its own, justifying processing it independently; but that's the exception to the rule.
 Group the sections so it makes sense to pass whole groups to the text-to-speech LLM.
@@ -216,6 +214,37 @@ The output should be a valid JSON object, and only the JSON object, nothing else
 """
 
 
+def group_sections(
+    text_name: str, section_stats: str, text: str, sections: dict[str, str]
+) -> dict[str, list[str]]:
+    division_prompt = DIVISION_PROMPT.format(
+        text_name=text_name, section_stats=section_stats, text=text
+    )
+    print("\n      · Grouping sections", file=sys.stderr)
+    division_response = gpt5(division_prompt, reasoning_effort="medium")
+    section_groups: dict[str, list[str]] = json.loads(division_response)
+    pprint(section_groups, indent=2, stream=sys.stderr, width=120, sort_dicts=False)
+
+    # Validate LLM-produced section_groups resolve against parsed sections
+    grouped_headings_count = 0
+    for group_headings in section_groups.values():
+        for section_heading in group_headings:
+            grouped_headings_count += 1
+            dictget(sections, section_heading)
+
+    if grouped_headings_count != len(sections):
+        print(
+            f"Error: {grouped_headings_count} grouped headings do not resolve against parsed sections",
+            file=sys.stderr,
+        )
+        from pdbr import set_trace
+
+        set_trace()
+        exit(1)
+
+    return section_groups
+
+
 def main():
     try:
         parser = argparse.ArgumentParser(description="Text-to-speech conversion tool")
@@ -233,7 +262,11 @@ def main():
             print("No title found", file=sys.stderr)
             return
 
-        sections: dict[str, str] = split_on_h2(text)
+        sections: dict[str, str]
+        text, sections = split_on_h2(text)
+        if "## References" in sections:
+            sections.pop("## References")
+            text = text[: text.index("## References")]
 
         # ---[ Group Sections ]---
         sections_info = [
@@ -249,32 +282,16 @@ def main():
             file=sys.stderr,
         )
         if len(text) > 10_000:
-            division_prompt = DIVISION_PROMPT.format(
-                text_name=doc_title, section_stats=section_stats, text=text
-            )
-            print("\n      -------- Grouping sections --------", file=sys.stderr)
-            division_response = gpt5(division_prompt, reasoning_effort="medium")
-            section_groups: dict[str, list[str]] = json.loads(division_response)
-            pprint(
-                section_groups, indent=2, stream=sys.stderr, width=120, sort_dicts=False
+            section_groups: dict[str, list[str]] = group_sections(
+                text_name=doc_title,
+                section_stats=section_stats,
+                text=text,
+                sections=sections,
             )
 
-            # Validate LLM-produced section_groups resolve against parsed sections
-            grouped_headings_count = 0
-            for group_headings in section_groups.values():
-                for section_heading in group_headings:
-                    grouped_headings_count += 1
-                    dictget(sections, section_heading)
-                    
-            if grouped_headings_count != len(sections):
-                print(f"Error: {grouped_headings_count} grouped headings do not resolve against parsed sections", file=sys.stderr)
-                from pdbr import set_trace
-                set_trace()
-                exit(1)
-            
         else:
             print(
-                "\n      -------- Text is short enough, skipping grouping --------",
+                "\n      · Text is short enough, skipping grouping",
                 file=sys.stderr,
             )
             section_groups = {
@@ -282,9 +299,7 @@ def main():
             }
 
         # ---[ Essences pre compute ]---
-        print(
-            "\n      -------- Precomputing section essences --------", file=sys.stderr
-        )
+        print("\n      · Precomputing section essences", file=sys.stderr)
         # Precompute essences for all referenced sections in parallel (max 4 workers)
         all_section_essences: dict[str, str] = {}
         with ThreadPoolExecutor(max_workers=min(4, len(section_groups))) as executor:
@@ -297,7 +312,7 @@ def main():
                         "Output what it is about in 10 words or less. No need to start with the section name or any intro, no explanations, just output the essence of it."
                     )
                     future = executor.submit(
-                        partial(gpt5_mini, reasoning_effort="low"), prompt
+                        partial(cached_gpt5_mini, reasoning_effort="high"), prompt
                     )
                     future_to_heading[future] = h
             for future in as_completed(future_to_heading):
@@ -313,7 +328,7 @@ def main():
         )
 
         # ---[ TTS prompt ]---
-        print("\n      -------- Starting group processing --------", file=sys.stderr)
+        print("\n      · Starting group processing", file=sys.stderr)
         tts_prompt: str = requests.get(prompt_cdn_url).text
         tts_prompt = f"The given content is a part of '{doc_title}'.\n\n{tts_prompt}"
         # --[ Collect prompts for each group ]--
@@ -350,7 +365,7 @@ def main():
             future_to_prompt = {}
             for prompt, i, group_title in tts_prompts:
                 print(
-                    f"\n      -------- Started processing group {i}: {group_title} --------",
+                    f"\n      · ⏳ Started processing group {i}/{len(tts_prompts)}: {group_title}",
                     file=sys.stderr,
                 )
                 file_paths: set[str] = extract_file_paths(prompt)
@@ -360,6 +375,11 @@ def main():
                 if len(file_paths) != len(existing_paths):
                     print(
                         f"Warning: {len(file_paths) - len(existing_paths)} file paths did not resolve to existing paths",
+                        file=sys.stderr,
+                    )
+                else:
+                    print(
+                        f"{len(file_paths)} file paths resolved to existing paths: {existing_paths}",
                         file=sys.stderr,
                     )
                 more_content_parts = []
@@ -381,13 +401,13 @@ def main():
                 future_to_prompt[future] = (prompt, i, group_title)
 
             for future in as_completed(future_to_prompt):
-                print(
-                    f"\n      -------- Finished processing group {i}: {group_title} --------",
-                    file=sys.stderr,
-                )
                 prompt, i, group_title = future_to_prompt[future]
                 tts_parts[i] = future.result()
-        print("\n      -------- Done converting --------", file=sys.stderr)
+                print(
+                    f"\n      · ✔ Finished processing group {i} ({len(tts_parts) / len(tts_prompts):.2%}% done): {group_title}",
+                    file=sys.stderr,
+                )
+        print("\n      · Done converting", file=sys.stderr)
 
         # --[ Write output ]--
         with open(args.output, "w") as f:
