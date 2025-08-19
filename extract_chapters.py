@@ -1,8 +1,8 @@
 #!/usr/bin/env /opt/homebrew/bin/uvx --with=PyMuPDF python3
 import fitz  # PyMuPDF
-import os
 import re
 import sys
+from pathlib import Path
 import extract_toc
 
 
@@ -15,13 +15,19 @@ def sanitize_filename(name):
 
 
 # --- Main Extraction Logic ---
-def extract_chapters_individually(doc, toc, output_dir):
+def extract_chapters_individually(doc, toc, output_dir, *, no_clobber=False):
     """Extracts each top-level chapter into its own PDF file."""
     print("Extracting chapters individually...")
     top_level_chapters = [item for item in toc if item[0] == 1]
 
     for i, chapter in enumerate(top_level_chapters):
         level, title, start_page = chapter
+        filename = f"{i + 1:02d}-{sanitize_filename(title)}.pdf"
+        output_dir_path = Path(output_dir)
+        output_path = output_dir_path / filename
+        if no_clobber and output_path.exists():
+            print(f"  - Skipping '{title}' because it already exists")
+            continue
 
         # Find the end page
         if i + 1 < len(top_level_chapters):
@@ -34,16 +40,15 @@ def extract_chapters_individually(doc, toc, output_dir):
         chapter_doc.insert_pdf(doc, from_page=start_page - 1, to_page=end_page - 1)
 
         # Save the chapter
-        filename = f"{i + 1:02d}-{sanitize_filename(title)}.pdf"
-        output_path = os.path.join(output_dir, filename)
-        chapter_doc.save(output_path)
+        chapter_doc.save(str(output_path))
         chapter_doc.close()
 
         print(f"  - Extracted '{title}' to '{output_path}'")
 
 
 def extract_chapters_in_batches(doc, toc, batch_size, output_dir):
-    """Extracts chapters in batches of a specified page size."""
+    """Extracts chapters in batches of a specified page size.
+    Note: this function has never been tried and probably doesn't work."""
     print(f"Extracting chapters in batches of {batch_size} pages...")
     top_level_chapters = [item for item in toc if item[0] == 1]
 
@@ -60,17 +65,20 @@ def extract_chapters_in_batches(doc, toc, batch_size, output_dir):
         else:
             end_page = doc.page_count
         page_count = end_page - start_page + 1
-        chapter_details.append({
-            "title": title,
-            "start": start_page,
-            "end": end_page,
-            "count": page_count,
-        })
+        chapter_details.append(
+            {
+                "title": title,
+                "start": start_page,
+                "end": end_page,
+                "count": page_count,
+            }
+        )
 
     # Second pass: Create batches
     current_batch_start_page = -1
     current_batch_end_page = -1
     current_batch_start_title = ""
+    current_batch_last_title = ""
 
     for i, details in enumerate(chapter_details):
         if not current_batch_chapters:
@@ -89,8 +97,9 @@ def extract_chapters_in_batches(doc, toc, batch_size, output_dir):
                 to_page=current_batch_end_page - 1,
             )
             filename = f"batch-{len(batches) + 1:02d}-{sanitize_filename(current_batch_start_title)}-to-{sanitize_filename(current_batch_last_title)}.pdf"
-            output_path = os.path.join(output_dir, filename)
-            batch_doc.save(output_path)
+            output_dir_path = Path(output_dir)
+            output_path = output_dir_path / filename
+            batch_doc.save(str(output_path))
             batch_doc.close()
             print(f"  - Extracted batch to '{output_path}'")
             batches.append(current_batch_chapters)
@@ -115,59 +124,80 @@ def extract_chapters_in_batches(doc, toc, batch_size, output_dir):
             to_page=current_batch_end_page - 1,
         )
         filename = f"batch-{len(batches) + 1:02d}-{sanitize_filename(current_batch_start_title)}-to-{sanitize_filename(current_batch_last_title)}.pdf"
-        output_path = os.path.join(output_dir, filename)
-        batch_doc.save(output_path)
+        output_dir_path = Path(output_dir)
+        output_path = output_dir_path / filename
+        batch_doc.save(str(output_path))
         batch_doc.close()
         print(f"  - Extracted batch to '{output_path}'")
 
 
 # --- Main Script ---
 if __name__ == "__main__":
+    import argparse
+
     # --- Argument Parsing ---
-    if len(sys.argv) not in [2, 4]:
-        print("Usage:")
-        print("  python extract_chapters.py <path_to_pdf>")
-        print("  python extract_chapters.py batch <size> <path_to_pdf>")
+    parser = argparse.ArgumentParser(description="Extract chapters from PDF")
+    parser.add_argument("pdf_path", help="Path to the PDF file")
+    parser.add_argument(
+        "-b",
+        "--batch-size",
+        type=int,
+        metavar="N",
+        default=None,
+        help="If set, extract in batches of N pages (default is individual mode)",
+    )
+    parser.add_argument(
+        "--no-clobber",
+        action="store_true",
+        help="Skip files that already exist (individual mode only)",
+    )
+
+    args = parser.parse_args()
+
+    # Determine mode and pdf_path
+    if args.pdf_path is None:
+        parser.print_help()
         sys.exit(1)
 
-    pdf_path = sys.argv[-1]
-
-    if not os.path.isfile(pdf_path):
-        print(f"Error: File not found at '{pdf_path}'")
+    pdf_path = args.pdf_path
+    if not Path(pdf_path).is_file():
+        print(f"Error: File not found at '{pdf_path}'", file=sys.stderr)
         sys.exit(1)
+    mode = "batch" if args.batch_size else "individual"
 
     # --- Output Directory Setup ---
-    base_name = os.path.basename(pdf_path)
-    dir_name = os.path.splitext(base_name)[0]
-    output_dir = os.path.join(os.path.dirname(pdf_path), f"{dir_name}_chapters")
+    pdf_path_p = Path(pdf_path)
+    base_name = pdf_path_p.name
+    dir_name = pdf_path_p.stem
+    output_dir = pdf_path_p.parent / f"{dir_name}_chapters"
 
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
-        print(f"Created output directory: {output_dir}")
+    if not output_dir.exists():
+        output_dir.mkdir()
+        print(f"Created output directory: {output_dir} (did not exist)")
 
     # --- PDF Processing ---
     try:
-        doc = fitz.open(pdf_path)
-        toc = extract_toc.get_toc(pdf_path)
-
-        if not toc:
-            print("No table of contents found or could be inferred in this PDF.")
+        doc = fitz.open(str(pdf_path_p))
+        toc = extract_toc.get_toc(str(pdf_path_p))
+        if toc:
+            print("Extracted TOC")
+        else:
+            print(
+                "No table of contents found or could be inferred in this PDF.",
+                file=sys.stderr,
+            )
             sys.exit(1)
 
         # --- Mode Execution ---
-        if len(sys.argv) == 4:
-            if sys.argv[1].lower() == "batch" and sys.argv[2].isdigit():
-                batch_size = int(sys.argv[2])
-                extract_chapters_in_batches(doc, toc, batch_size, output_dir)
-            else:
-                print("Invalid arguments for batch mode.")
-                print("Usage: python extract_chapters.py batch <size> <path_to_pdf>")
-                sys.exit(1)
+        if mode == "batch":
+            extract_chapters_in_batches(doc, toc, args.batch_size, output_dir)
         else:
-            extract_chapters_individually(doc, toc, output_dir)
+            extract_chapters_individually(
+                doc, toc, output_dir, no_clobber=args.no_clobber
+            )
 
     except Exception as e:
-        print(f"An error occurred: {e}")
+        print(f"An error occurred: {e}", file=sys.stderr)
         sys.exit(1)
 
     print("Done.")
