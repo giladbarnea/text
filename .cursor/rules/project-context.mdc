@@ -11,9 +11,15 @@ It's in VERY early stages: the main focus is on robustly extracting table of con
 
 ### `extract_toc.py`
 
-Because PDFs are a mess, it relies on a combination of heuristics and statistics to infer the table of contents. The effort of improving them is where the most potential value, at least in the near future, lies.
+"Extracting" a TOC has exactly two aspects:
+1. Recognizing the headers and their page numbers
+2. Inferring their heading-level (H1-H5).
 
-The mental framework when working on them is high precision and high recall: capturing all the headings; don't erronously include any non-heading text.
+**Currently, recognizing the headers and their page numbers is the top priority, while inferring heading-level correctly is secondary.**
+
+Because PDFs are a mess, extract_toc.py relies on a combination of heuristics and statistics to extract the table of contents. The effort of improving them is where the most potential value, at least in the near future, lies.
+
+The mental framework for recognizing headers is high precision and high recall: capture all headings, and don’t mistakenly include non-heading text.
 
 It currently has a perfect score on the first test case -- The "What Has a Foundation Model Found? paper" (tests/test_what_foundational_models_found).
 
