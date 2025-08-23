@@ -2,11 +2,11 @@
 
 import argparse
 import os
-from .types import HeadingLevel, Page, RawData, Text
-from .parsing import parse_pdf_document
-from .analysis import FontStatisticalAnalyzer
-from .strategies import embedded_strategy
 
+from . import HeadingLevel, Page, RawData, Text
+from .analysis import FontStatisticalAnalyzer
+from .parsing import parse_pdf_document
+from .strategies import embedded_strategy
 
 """Core API surface for extract_toc.
 
@@ -75,3 +75,5 @@ def main_cli() -> None:
             print(f"{indent}{title} (Page {page})")
 
 
+if __name__ == "__main__":
+    main_cli()
